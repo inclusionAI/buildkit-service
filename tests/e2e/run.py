@@ -418,7 +418,7 @@ class Run:
         name = self.state['name']
         tags = [entry['tag'] for entry in self.state['images'].values()]
         # Load anonymous dependencies too: tests never need kubelet to contact public registries.
-        for dep in ('pip', 'npm', 'registry'):
+        for dep in ('pip', 'npm', 'registry', 'maven'):
             tag = name + '-' + dep + ':test'
             self.state['images'][dep] = {'tag': tag, 'id': json.loads(self.docker('image', 'inspect', self.image(dep)))[0]['Id']}
             self.save()  # Record ownership before creating an alias, including interrupted imports.
@@ -447,7 +447,7 @@ class Run:
     def deploy_chart(self):
         values = json.loads((HERE / 'values.json').read_text())
         values['image'] = self.state['images']['service']['tag']
-        for dep, section in [('apt', 'aptYum'), ('git', 'git'), ('pip', 'pip'), ('npm', 'npm'), ('registry', 'registry')]:
+        for dep, section in [('apt', 'aptYum'), ('git', 'git'), ('pip', 'pip'), ('npm', 'npm'), ('maven', 'maven'), ('registry', 'registry')]:
             tag = self.state['images'][dep]['tag']
             values['packageMirror'][section]['image'] = {'repository': tag.split(':')[0], 'tag': 'test', 'pullPolicy': 'Never'}
         values_path = self.directory / 'values.json'

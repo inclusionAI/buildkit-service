@@ -11,8 +11,8 @@ jobs:
   e2e-tooling:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Test E2E tooling
         run: make e2e-unit
       - name: Test standalone development tooling
@@ -26,13 +26,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Run native amd64 E2E
         run: make e2e E2E_RUN_DIR=artifacts/e2e/ci
       - name: Upload E2E diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kind-e2e-linux-amd64
           retention-days: 7
@@ -45,10 +45,13 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - name: Isolate Go module cache from runner preinstalled modules
+        run: echo "GOMODCACHE=$RUNNER_TEMP/go-mod-cache" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: Install liblmdb (cgo dependency of buildctl-batch)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends liblmdb-dev
       - name: Build
@@ -65,8 +68,8 @@ jobs:
   helm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
       - name: Lint chart
         run: helm lint chart/ --set buildctlDaemon.auth.token=ci-lint-placeholder
       - name: Render chart
@@ -87,8 +90,8 @@ jobs:
   scripts-and-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
       - name: Check shell and Python syntax
         run: |
           bash -n scripts/buildctl-batch.sh scripts/preheat.sh cmd/buildctl-daemon/test/integration.sh chart/images/apt-cacher-ng/entrypoint.sh chart/test-package-mirror-autoscaling-render.sh chart/test-package-mirror-maven-render.sh

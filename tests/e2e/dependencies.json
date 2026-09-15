@@ -88,6 +88,15 @@
       },
       "source": "https://github.com/distribution/distribution",
       "license": "Apache-2.0"
+    },
+    "maven": {
+      "repository": "dzikoysk/reposilite",
+      "version": "3.6.3",
+      "platforms": {
+        "amd64": "sha256:bd7d4b43176305f32173cfeee7010c089eed66fb61cbb4ff1978ba2c62728ed5"
+      },
+      "source": "https://github.com/dzikoysk/reposilite",
+      "license": "Apache-2.0"
     }
   },
   "tools": {

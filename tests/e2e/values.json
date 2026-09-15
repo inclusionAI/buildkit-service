@@ -111,7 +111,8 @@
         "npmSizeLimit": "512Mi",
         "aptYumSizeLimit": "512Mi",
         "gitSizeLimit": "512Mi",
-        "registrySizeLimit": "512Mi"
+        "registrySizeLimit": "512Mi",
+        "mavenSizeLimit": "1Gi"
       }
     },
     "pip": {
@@ -212,6 +213,29 @@
       },
       "cacheMetrics": {
         "enabled": false
+      }
+    },
+    "maven": {
+      "replicaCount": 1,
+      "image": {
+        "pullPolicy": "Never"
+      },
+      "cacheMetrics": {
+        "enabled": false
+      },
+      "env": {
+        "javaOpts": "-Xms128m -Xmx512m"
+      },
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "256Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "1Gi",
+          "ephemeral-storage": "2Gi"
+        }
       }
     }
   }
