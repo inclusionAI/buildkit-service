@@ -1,0 +1,46 @@
+{{- if and .Values.packageMirror.enabled .Values.packageMirror.maven.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.packageMirror.maven.serviceName }}
+  namespace: {{ include "buildkit-service.packageMirror.namespace" . }}
+  labels:
+    {{- include "buildkit-service.packageMirror.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ .Values.packageMirror.maven.serviceName }}
+spec:
+  type: {{ .Values.packageMirror.service.type }}
+  {{- with .Values.packageMirror.service.sessionAffinity }}
+  sessionAffinity: {{ . }}
+  {{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.packageMirror.service.port }}
+      targetPort: {{ .Values.packageMirror.maven.portName }}
+      protocol: {{ .Values.packageMirror.maven.protocol }}
+  selector:
+    {{- include "buildkit-service.packageMirror.mavenSelectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: maven
+{{- if .Values.packageMirror.maven.cacheMetrics.enabled }}
+---
+# Headless metrics service so the metrics-aggregator can scrape each replica's
+# cache-usage sidecar (same shape as the registry mirror metrics service).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-metrics" .Values.packageMirror.maven.serviceName }}
+  namespace: {{ include "buildkit-service.packageMirror.namespace" . }}
+  labels:
+    {{- include "buildkit-service.packageMirror.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ .Values.packageMirror.maven.serviceName }}
+spec:
+  clusterIP: None
+  ports:
+    - name: {{ .Values.packageMirror.maven.cacheMetrics.portName }}
+      port: {{ .Values.packageMirror.maven.cacheMetrics.port }}
+      targetPort: {{ .Values.packageMirror.maven.cacheMetrics.portName }}
+      protocol: {{ .Values.packageMirror.maven.protocol }}
+  selector:
+    {{- include "buildkit-service.packageMirror.mavenSelectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: maven
+{{- end }}
+{{- end }}

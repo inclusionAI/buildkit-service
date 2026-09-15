@@ -1,0 +1,128 @@
+{{- if and .Values.packageMirror.enabled .Values.packageMirror.maven.enabled }}
+{{- $topologySpread := .Values.packageMirror.topologySpread | default dict -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "buildkit-service.packageMirror.mavenFullname" . }}
+  namespace: {{ include "buildkit-service.packageMirror.namespace" . }}
+  labels:
+    {{- include "buildkit-service.packageMirror.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maven
+spec:
+  {{- /*
+    hasKey distinguishes an absent replicaCount from an explicit 0: Helm treats
+    numeric 0 as empty, so `default` would fall back to the shared replica count
+    and an attempt to scale this backend to zero would instead start that many
+    Pods. values.yaml always supplies the key, so the fallback only applies to
+    values files that deliberately omit it.
+  */}}
+  {{- $replicas := .Values.packageMirror.maven.replicaCount }}
+  {{- if not (hasKey .Values.packageMirror.maven "replicaCount") }}
+  {{- $replicas = .Values.packageMirror.deployment.replicaCount }}
+  {{- end }}
+  replicas: {{ $replicas }}
+  {{- /*
+    A ReadWriteOnce cache volume cannot be attached to the replacement Pod while
+    the outgoing Pod still holds it, so the shared RollingUpdate strategy (which
+    surges a new Pod before removing the old one) can leave the replacement
+    stuck ContainerCreating. Recreate is the safe policy for that topology.
+    Empty maven.strategy selects this default; set it explicitly to override.
+  */}}
+  {{- $strategy := .Values.packageMirror.maven.strategy }}
+  {{- if not $strategy }}
+  {{- if .Values.packageMirror.maven.persistence.enabled }}
+  {{- $strategy = dict "type" "Recreate" }}
+  {{- else }}
+  {{- $strategy = .Values.packageMirror.deployment.strategy }}
+  {{- end }}
+  {{- end }}
+  strategy:
+    {{- toYaml $strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "buildkit-service.packageMirror.mavenSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "buildkit-service.packageMirror.mavenSelectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: maven
+        {{- with .Values.packageMirror.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- /*
+          The shared configuration is mounted with subPath, so a ConfigMap update
+          does not propagate into a running container. Rolling the Pod on a
+          checksum change is what actually applies edits to upstreamUrl,
+          metadataMaxAge, resolutionCacheMaxEntries, and the other repository
+          settings.
+        */}}
+        checksum/config: {{ include (print $.Template.BasePath "/package-mirror-maven-configmap.yaml") . | sha256sum }}
+        {{- with .Values.packageMirror.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.packageMirror.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.packageMirror.podSecurityContext | nindent 8 }}
+      containers:
+        {{- include "buildkit-service.packageMirror.mavenContainer" . | nindent 8 }}
+        {{- if .Values.packageMirror.maven.cacheMetrics.enabled }}
+        {{- include "buildkit-service.dirSizeExporterContainer" (dict
+              "root" .
+              "config" .Values.packageMirror.maven.cacheMetrics
+              "prefix" "package_mirror"
+              "targets" (printf "maven=%s" "/app/data")
+              "mountName" (include "buildkit-service.packageMirror.mavenDataVolumeName" .)
+              "mountPath" "/app/data"
+              "protocol" .Values.packageMirror.maven.protocol) | nindent 8 }}
+        {{- end }}
+      {{- with (default .Values.packageMirror.nodeSelector .Values.packageMirror.maven.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (default .Values.packageMirror.affinity .Values.packageMirror.maven.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if (get $topologySpread "enabled") }}
+      topologySpreadConstraints:
+        - maxSkew: {{ get $topologySpread "maxSkew" | default 1 }}
+          topologyKey: {{ get $topologySpread "topologyKey" | default "kubernetes.io/hostname" | quote }}
+          whenUnsatisfiable: {{ get $topologySpread "whenUnsatisfiable" | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "buildkit-service.packageMirror.mavenSelectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: maven
+      {{- end }}
+      {{- with (default .Values.packageMirror.tolerations .Values.packageMirror.maven.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: {{ include "buildkit-service.packageMirror.mavenConfigVolumeName" . }}
+          configMap:
+            name: {{ include "buildkit-service.packageMirror.mavenFullname" . }}
+        {{- if .Values.packageMirror.maven.cacheMetrics.enabled }}
+        # The maven ConfigMap only holds the shared configuration file; the
+        # exporter script is shared with the other backends from the main
+        # package-mirror ConfigMap.
+        - name: {{ include "buildkit-service.packageMirror.configVolumeName" . }}
+          configMap:
+            name: {{ include "buildkit-service.packageMirror.fullname" . }}
+        {{- end }}
+        {{- if .Values.packageMirror.maven.persistence.enabled }}
+        - name: {{ include "buildkit-service.packageMirror.mavenDataVolumeName" . }}
+          persistentVolumeClaim:
+            claimName: {{ default (include "buildkit-service.packageMirror.mavenFullname" .) .Values.packageMirror.maven.persistence.existingClaim }}
+        {{- else }}
+        - name: {{ include "buildkit-service.packageMirror.mavenDataVolumeName" . }}
+          emptyDir:
+            {{- with .Values.packageMirror.persistence.emptyDir.mavenSizeLimit }}
+            sizeLimit: {{ . }}
+            {{- end }}
+        {{- end }}
+{{- end }}

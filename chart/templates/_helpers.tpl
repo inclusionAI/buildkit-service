@@ -243,6 +243,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/name: {{ include "buildkit-service.packageMirror.name" . }}-git
 {{- end -}}
 
+{{- define "buildkit-service.packageMirror.mavenFullname" -}}
+{{- printf "%s-maven" (include "buildkit-service.packageMirror.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "buildkit-service.packageMirror.mavenSelectorLabels" -}}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/name: {{ include "buildkit-service.packageMirror.name" . }}-maven
+{{- end -}}
+
 {{- define "buildkit-service.packageMirror.labels" -}}
 helm.sh/chart: {{ include "buildkit-service.packageMirror.chart" . }}
 app.kubernetes.io/name: {{ include "buildkit-service.packageMirror.name" . }}
@@ -287,8 +296,62 @@ cache-git
 cache-registry
 {{- end -}}
 
+{{- define "buildkit-service.packageMirror.mavenDataVolumeName" -}}
+cache-maven
+{{- end -}}
+
+{{- define "buildkit-service.packageMirror.mavenConfigVolumeName" -}}
+maven-config
+{{- end -}}
+
 {{- define "buildkit-service.packageMirror.configVolumeName" -}}
 config
+{{- end -}}
+
+{{/*
+Shared configuration file for Reposilite, mounted read-only and passed with
+--shared-configuration. Reposilite never writes this file (its local shared
+configuration provider reports isMutable()=false), so a read-only ConfigMap is
+a supported configuration source: an external supervisor (Helm) owns it, and
+no database-backed bootstrap or REST setup is required.
+
+Top-level keys are Reposilite "domains". The Maven domain name is derived from
+the @Doc(title = "Maven") annotation, sanitized by lowercase()/replace(' ','_'),
+so the key is exactly "maven". Field names below come from MavenSettings.kt,
+RepositorySettings, MirroredRepositorySettings and
+FileSystemStorageProviderSettings.
+
+The central mirror keeps store=true (required: Reposilite does NOT cache
+proxied artifacts by default) and mirrors Maven Central's own guidance for
+429-prone consumers: a metadata TTL between 300 and 3600 seconds plus a
+resolution cache of 2048+ entries. metadataMaxAge is the field that decides how
+often maven-metadata.xml is refetched from upstream; keeping it well below the
+default (0 = always refetch) is what collapses upstream request volume.
+*/}}
+{{- define "buildkit-service.packageMirror.mavenSharedConfiguration" -}}
+{{- $maven := .Values.packageMirror.maven -}}
+{{- $repositoryId := $maven.repositoryId -}}
+{{- $storageProvider := dict "type" "fs" -}}
+{{- if $maven.env.quota -}}
+{{- $storageProvider = merge $storageProvider (dict "quota" $maven.env.quota) -}}
+{{- end -}}
+{{- $repositories := list -}}
+{{- $repositories = append $repositories (dict
+      "id" $repositoryId
+      "visibility" ($maven.visibility | default "PUBLIC")
+      "storageProvider" $storageProvider
+      "storagePolicy" ($maven.storagePolicy | default "PRIORITIZE_UPSTREAM_METADATA")
+      "metadataMaxAge" (int64 $maven.metadataMaxAge)
+      "resolutionCacheMaxEntries" (int $maven.resolutionCacheMaxEntries)
+      "parallelMetadataLookup" ($maven.parallelMetadataLookup | default false)
+      "proxied" (list (dict
+        "reference" $maven.upstreamUrl
+        "store" (not (not $maven.store))
+        "connectTimeout" (int $maven.env.connectTimeoutSeconds)
+        "readTimeout" (int $maven.env.readTimeoutSeconds)
+      ))
+    ) -}}
+{{- dict "maven" (dict "repositories" $repositories) | toPrettyJson -}}
 {{- end -}}
 
 {{- define "buildkit-service.packageMirror.selectedRegistryMirrors" -}}

@@ -81,6 +81,8 @@ jobs:
         run: python3 chart/test-package-mirror-remap.py
       - name: Test package-mirror autoscaling rendering
         run: bash chart/test-package-mirror-autoscaling-render.sh
+      - name: Test package-mirror maven rendering
+        run: bash chart/test-package-mirror-maven-render.sh
 
   scripts-and-docs:
     runs-on: ubuntu-latest
@@ -89,7 +91,7 @@ jobs:
       - uses: azure/setup-helm@v4
       - name: Check shell and Python syntax
         run: |
-          bash -n scripts/buildctl-batch.sh scripts/preheat.sh cmd/buildctl-daemon/test/integration.sh chart/images/apt-cacher-ng/entrypoint.sh chart/test-package-mirror-autoscaling-render.sh
+          bash -n scripts/buildctl-batch.sh scripts/preheat.sh cmd/buildctl-daemon/test/integration.sh chart/images/apt-cacher-ng/entrypoint.sh chart/test-package-mirror-autoscaling-render.sh chart/test-package-mirror-maven-render.sh
           python3 -m py_compile chart/images/git-cache/git-cache-server.py
       - name: Parse generated and embedded YAML
         run: |

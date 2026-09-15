@@ -47,5 +47,29 @@ spec:
 {{- end }}
 {{- /* registry mirror caches use StatefulSet volumeClaimTemplates (one PVC
    per replica); see package-mirror-registry-deployment.yaml. */}}
+{{- if and .Values.packageMirror.maven.enabled .Values.packageMirror.maven.persistence.enabled (not .Values.packageMirror.maven.persistence.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "buildkit-service.packageMirror.mavenFullname" . }}
+  namespace: {{ include "buildkit-service.packageMirror.namespace" . }}
+  labels:
+    {{- include "buildkit-service.packageMirror.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maven
+  {{- with .Values.packageMirror.maven.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.packageMirror.maven.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.packageMirror.maven.persistence.size }}
+  {{- with .Values.packageMirror.maven.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}
 
 {{- end }}

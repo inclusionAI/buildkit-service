@@ -1,7 +1,7 @@
 # Package Mirror
 
 The package mirror is an in-cluster package cache that accelerates pip, npm,
-apt, yum/dnf, apk, git, and Docker/BuildKit `FROM` image pulls.
+apt, yum/dnf, apk, git, Maven, and Docker/BuildKit `FROM` image pulls.
 
 > For the build service itself, see [buildctl-batch.md](buildctl-batch.md) (batch
 > CLI) and [buildctl-daemon.md](buildctl-daemon.md) (HTTP API).
@@ -27,6 +27,7 @@ all external upstreams where the selected cache protocol supports it.
 | apt / yum / dnf | `http://apt-yum.package-mirror.svc.cluster.local` |
 | apk | `http://apk.package-mirror.svc.cluster.local/alpine` |
 | git | `http://git.package-mirror.svc.cluster.local` |
+| Maven | `http://maven.package-mirror.svc.cluster.local/releases/` |
 | Docker registry | Configured transparently on the BuildKit side; Dockerfiles keep their original `FROM` lines |
 | metrics | `http://metrics.package-mirror.svc.cluster.local/metrics` |
 
@@ -296,6 +297,106 @@ git_clone_with_fallback() {
 git_clone_with_fallback https://github.com/opencontainers/runc.git /src/runc
 ```
 
+### Maven
+
+Point Maven at the in-cluster repository through a global `settings.xml`.
+[Reposilite](https://reposilite.com/) serves it as a read-only proxy cache in
+front of Maven Central:
+
+```dockerfile
+RUN set -eux; \
+    if command -v mvn >/dev/null 2>&1; then \
+      mkdir -p /root/.m2; \
+      printf '%s\n' \
+        '<?xml version="1.0"?>' \
+        '<settings>' \
+        '  <mirrors>' \
+        '    <mirror>' \
+        '      <id>package-mirror-maven</id>' \
+        '      <mirrorOf>central</mirrorOf>' \
+        '      <url>http://maven.package-mirror.svc.cluster.local/releases/</url>' \
+        '    </mirror>' \
+        '  </mirrors>' \
+        '</settings>' > /root/.m2/settings.xml; \
+    fi
+```
+
+Gradle uses an init script instead:
+
+```groovy
+// /root/.gradle/init.gradle
+allprojects {
+    repositories {
+        maven {
+            url 'http://maven.package-mirror.svc.cluster.local/releases/'
+            allowInsecureProtocol = true
+        }
+    }
+}
+```
+
+This cache exists primarily to absorb **Maven Central rate limiting**. Central
+enforces consumption limits and answers `429 Too Many Requests` when an egress
+path generates enough aggregate traffic; because usage is aggregated per public
+network address, unrelated jobs sharing the same NAT/VPN/CI egress can trip the
+limit for each other. Retrying harder makes 429 blocks longer (up to 24 hours),
+so the supported fix is to stop sending per-build requests upstream at all.
+Routing builds through this cache does that.
+
+#### Measured upstream reduction
+
+Request counts below were measured against a logging upstream that records every
+request the cache forwards, with `store: true`:
+
+| Scenario | Client requests | Upstream requests |
+| --- | --- | --- |
+| One warm artifact, 50 sequential | 50 | **0** |
+| One warm artifact, 50 concurrent | 50 | **0** |
+| 20 cold artifacts, 5 sequential passes each | 100 | **40** (2 per artifact) |
+| 20 cold artifacts, 5 concurrent passes each | 100 | **65** (cold-start fan-out) |
+
+Two properties matter for capacity planning:
+
+- **Warm reads never reach upstream.** Once an artifact is cached, any number of
+  builds resolving it costs Central nothing. This is the steady state, and it is
+  what removes the 429 pressure.
+- **Cold start fans out under concurrency.** When several builds request the same
+  *uncached* artifact simultaneously, each in-flight request misses the cache and
+  forwards upstream, so the first minutes after a cache wipe or a large dependency
+  bump cost more upstream requests than the same load would serially. It still
+  beats no cache at all (65 vs 100 above), and it self-corrects within one pass.
+  To blunt it, pre-warm a fresh cache during a quiet window
+  (`mvn -B dependency:go-offline` in a warm-up job) rather than on the critical
+  path of a large parallel build, and prefer persistence so wipes are rare.
+
+Correctness is unaffected: in the concurrent cold-start tests every client
+received `200` with identical content.
+
+Notes:
+
+- **Maven has no reliable client-level fallback.** Mirror semantics are complex
+  and listing two mirrors makes Maven try them in sequence, which amplifies
+  upstream traffic. Rely on the server side instead: the cache falls back to the
+  configured upstream itself, and propagates a genuine upstream `429` rather
+  than masking it as a missing artifact.
+- This backend is **read-only**: it proxies and caches downloads but does not
+  host published artifacts, and it requires no access token. For publishing
+  internal artifacts, add a separate hosted repository and token separately.
+- The Maven cache is the one backend whose **persistence defaults matter most**.
+  Like the others it starts on a node-local `emptyDir`, but a cold Maven cache
+  means every artifact is refetched from upstream — the traffic this backend
+  exists to remove. Enable `packageMirror.maven.persistence.enabled=true` for
+  any environment that depends on the cache. On clusters that run the official
+  image as a non-root user, also set `packageMirror.podSecurityContext.fsGroup`
+  so the volume is writable.
+- `--mount=type=cache,target=/root/.m2/repository` further speeds up repeated
+  builds, but its cache is node-local and is not shared across buildkitd
+  workers. It complements, but does not replace, the cluster cache.
+- Only Maven Central is proxied by default. For Android or Gradle Plugin Portal
+  dependencies, add a second repository rather than stacking mirrors onto the
+  same one — sequential mirror lookup makes a miss on the first mirror cost a
+  wasted upstream round trip on every request.
+
 ### Docker registry / BuildKit `FROM`
 
 Docker/BuildKit `FROM` pulls are mirrored via the buildkitd registry mirror
@@ -319,6 +420,7 @@ origin registry when the cache/mirror is unavailable.
 | yum / dnf | List both mirror and upstream in `baseurl`. |
 | apk | List both mirror and upstream in `/etc/apk/repositories`. |
 | git | Use `git_clone_with_fallback` above. |
+| Maven | Server-side: the cache falls back to its configured upstream itself, and returns a real upstream `429` instead of hiding it. Prefer this over a client-side second mirror. |
 | BuildKit | Put the origin registry after the package-mirror entry in the `mirrors` list. |
 
 ## Metrics
@@ -338,6 +440,12 @@ Common metrics:
 | `package_mirror_apt_cache_hits` / `_misses` | apt request-level hit/miss counts (parsed from acng access log). |
 | `package_mirror_apt_bytes_out_total` / `_in_total` | Bytes served to clients / fetched from upstream; byte hit ratio = 1 - in/out. |
 
+The Maven backend is scraped from its own per-pod sidecar rather than the shared
+metrics Service, so its cache gauges carry a `target="maven"` label and appear
+as unlabelled aggregates in the `metrics` Service output (one replica is the
+default, so the aggregate is that replica's cache). `metrics_aggregator_scrape_up{target="package_mirror_maven"}`
+reports whether the scrape succeeded.
+
 ## Deployment internals
 
 The package mirror is deployed by `chart/` (shared with buildkit-service,
@@ -346,6 +454,9 @@ gated by `packageMirror.enabled`) as three kinds of workloads:
 - Main Deployment `package-mirror`: pip, npm, apt/yum/apk, metrics containers.
 - Standalone Deployment `package-mirror-git`: git-cache (cache growth / OOM
   cannot take down other backends).
+- Standalone Deployment `package-mirror-maven`: Reposilite (a JVM process with a
+  persistent data directory; its OOM or a full cache volume must not evict
+  pip/npm/apt-yum).
 - One StatefulSet per registry mirror (for example
   `package-mirror-registry-dockerhub`; its Service is `registry-dockerhub`),
   derived from the top-level `registries` section of `chart/values.yaml`.
@@ -371,6 +482,7 @@ isolation in the normal case without permanent Pending during node shortage.
 | apt + yum | [apt-cacher-ng](https://www.unix-ag.uni-kl.de/~bloch/acng/) (self-built 3.7.5 image) | 3142 | `apt-yum` | 80 | `http://mirrors.edge.kernel.org` |
 | apk | Same container as apt/yum | 3142 | `apk` | 80 | `http://dl-cdn.alpinelinux.org/alpine` |
 | git | Self-built git-cache (`git clone --mirror` + `git-http-backend`) | 8080 | `git` | 80 | Any valid host (first URL segment) |
+| Maven | [Reposilite](https://reposilite.com/) 3.6+ | 8081 | `maven` | 80 | `https://repo.maven.apache.org/maven2/` |
 | registry | Docker Distribution pull-through cache | 5000 | `registry-<name>` | 80 | Configured in the `registries` section |
 | metrics | Python exporter | 9090 | `metrics` | 80 | Local cache dirs and health checks |
 
@@ -421,6 +533,14 @@ mirroring trusted private Git servers and after restricting client namespaces.
   support; one instance serves both apt and yum/dnf.
 - git → self-built git-cache: generic HTTP caches cannot cache smart HTTP
   packs; local bare mirrors + `git-http-backend` are required.
+- Maven → Reposilite: unlike the file caches above, Maven has real repository
+  semantics — mutable `maven-metadata.xml`, negative caching for missing
+  artifacts, and checksum files. A generic HTTP cache mishandles these (stale
+  metadata resolves versions that no longer exist), so a repository manager is
+  required. Reposilite is chosen over Nexus because it is self-contained (no
+  external database; Nexus disallows containerised embedded-H2 deployments and
+  needs ~8 GB RAM), starts fast, and documents the Maven Central 429 case
+  directly.
 - registry → Docker Distribution: pull-through cache for BuildKit `FROM`
   pulls.
 
@@ -659,6 +779,7 @@ In-container cache paths:
 | npm | `/verdaccio/storage` | `cache-npm` | `2Gi` |
 | apt/yum/apk | `/var/cache/apt-cacher-ng` | `cache-apt-yum` | `2Gi` |
 | git | `/var/cache/git-mirror` | `cache-git` | `2Gi` |
+| Maven | `/app/data` | `cache-maven` | `100Gi` (emptyDir unless persistence is enabled) |
 | registry (per mirror) | `/var/lib/registry` | `cache-registry` | `2Gi` |
 | metrics | `/cache/*` (read-only) | same as above | no writes |
 
@@ -687,6 +808,13 @@ Impact of a full disk / reached quota:
   normally prevents fill-up; if the disk still fills, new mirror creation and
   refreshes fail while existing bare mirrors stay readable — clients need the
   upstream fallback.
+- **Maven/Reposilite**: the cache has no size-based eviction of its own. Do NOT
+  point the generic `cache-gc` janitor at `/app/data` — it holds Reposilite's
+  repository layout and settings database, not plain files, so deleting
+  underneath it corrupts the instance. Size `packageMirror.maven.persistence.size`
+  and alert on usage. The `packageMirror.maven.env.quota` setting is available
+  but its behaviour when reached (reject writes vs evict) has not been verified
+  here, so treat the volume, not the quota, as the real bound.
 - **registry (Docker Distribution)**: the pull-through cache is cleaned by the
   native proxy TTL scheduler. A full cache disk evicts the whole pod; BuildKit
   `FROM` pulls fall back to the next mirror/origin or fail. Never run generic
@@ -708,6 +836,7 @@ Per-backend Services (namespace `package-mirror`):
 - apt/yum: `apt-yum.package-mirror.svc.cluster.local`
 - apk: `apk.package-mirror.svc.cluster.local`
 - git: `git.package-mirror.svc.cluster.local`
+- Maven: `maven.package-mirror.svc.cluster.local` (`/releases/`)
 - metrics: `metrics.package-mirror.svc.cluster.local` (`/metrics`)
 
 All on port 80.
@@ -727,6 +856,14 @@ All on port 80.
 - git GC high-water: `--set packageMirror.git.env.maxDiskBytes=128849018880` (default 120Gi; LRU-evicts down to 80%, keep headroom below the emptyDir `gitSizeLimit`)
 - registry mirror upstreams/auth: edit the top-level `registries` section of `chart/values.yaml`
 - registry pull-through TTL: `--set packageMirror.registry.env.ttl=1h`
+- Maven upstream: `--set packageMirror.maven.upstreamUrl=https://repo.maven.apache.org/maven2/`
+- Maven metadata TTL (seconds, 300–3600 recommended): `--set packageMirror.maven.metadataMaxAge=600`
+- Maven resolution cache entries (0 disables, 2048+ for a broad upstream): `--set packageMirror.maven.resolutionCacheMaxEntries=2048`
+- Maven JVM heap: `--set-string packageMirror.maven.env.javaOpts='-Xms512m -Xmx1g'`
+- Maven cache volume (persistence is off by default, matching the other backends): `--set packageMirror.maven.persistence.enabled=true --set packageMirror.maven.persistence.size=200Gi`
+- Maven update strategy (defaults to `Recreate` when persistence is on, because a ReadWriteOnce volume cannot attach to a replacement Pod while the outgoing one holds it; override explicitly for a ReadWriteMany claim): `--set packageMirror.maven.strategy.type=RollingUpdate`
+- Maven storage quota (`90%`, `500MB`, ...; empty = whole volume): `--set-string packageMirror.maven.env.quota=80Gi`
+- Maven backend off: `--set packageMirror.maven.enabled=false`
 - PDB: `--set packageMirror.podDisruptionBudget.enabled=true --set packageMirror.podDisruptionBudget.maxUnavailable=1`
 - Topology spread: `--set packageMirror.topologySpread.enabled=true --set packageMirror.topologySpread.whenUnsatisfiable=ScheduleAnyway`
 
@@ -774,6 +911,19 @@ into ConfigMaps and mounted read-only.
   instead of only raising memory.
 - For private package publishing, per-team indexes, or auth, switch pip to
   devpi or enable verdaccio authentication/publishing separately.
+- Maven replicas also do not share a warm cache (each owns its `/app/data`), so
+  keep one replica unless the volume is genuinely shareable. The default
+  `store: true` is what makes the cache effective — with it off, Reposilite
+  proxies every request straight through to Maven Central and the 429 traffic is
+  unchanged. `metadataMaxAge` must likewise stay bounded: `0` refetches
+  `maven-metadata.xml` on every request.
+- The Maven shared configuration is mounted with `subPath`, so editing the
+  ConfigMap alone does not reach a running container. The Pod template carries a
+  `checksum/config` annotation, and changing any repository setting
+  (`upstreamUrl`, `metadataMaxAge`, `store`, `repositoryId`, ...) rolls the Pod.
+  A `helm upgrade` that changes only such a value therefore restarts this
+  backend; expect a brief window where it is unavailable while Reposilite
+  reinitializes.
 
 ## Docker regression test
 

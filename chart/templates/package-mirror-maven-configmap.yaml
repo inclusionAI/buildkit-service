@@ -1,0 +1,13 @@
+{{- if and .Values.packageMirror.enabled .Values.packageMirror.maven.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "buildkit-service.packageMirror.mavenFullname" . }}
+  namespace: {{ include "buildkit-service.packageMirror.namespace" . }}
+  labels:
+    {{- include "buildkit-service.packageMirror.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maven
+data:
+  configuration.shared.json: |
+    {{- include "buildkit-service.packageMirror.mavenSharedConfiguration" . | nindent 4 }}
+{{- end }}

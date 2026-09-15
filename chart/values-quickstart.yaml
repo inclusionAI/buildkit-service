@@ -124,6 +124,22 @@ packageMirror:
         cpu: "1"
         memory: 1Gi
         ephemeral-storage: 2Gi
+  maven:
+    replicaCount: 1
+    affinity: null
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+        # Keep equal to persistence.emptyDir.mavenSizeLimit so the emptyDir
+        # fallback cannot trip container-level eviction first.
+        ephemeral-storage: 10Gi
+    persistence:
+      enabled: false
   registry:
     deployment:
       replicaCount: 1
@@ -141,10 +157,4 @@ packageMirror:
       aptYumSizeLimit: 2Gi
       gitSizeLimit: 2Gi
       registrySizeLimit: 2Gi
-  persistence:
-    emptyDir:
-      pipSizeLimit: 2Gi
-      npmSizeLimit: 2Gi
-      aptYumSizeLimit: 2Gi
-      gitSizeLimit: 2Gi
-      registrySizeLimit: 2Gi
+      mavenSizeLimit: 10Gi

@@ -933,6 +933,150 @@ packageMirror:
       failureThreshold: 3
       successThreshold: 1
   
+  # Maven artifact cache (read-only proxy for Maven Central). Runs as its own
+  # Deployment, like git-cache, because Reposilite is a JVM process that keeps
+  # its repository data under a persistent directory: an OOM or a full disk must
+  # not evict pip/npm/apt-yum.
+  #
+  # Maven Central enforces consumption limits and answers 429 Too Many Requests
+  # when an egress path generates enough aggregate traffic. Routing builds
+  # through this cache replaces per-build upstream fetches with cached reads,
+  # which is the supported fix (retrying harder makes 429 escalations worse).
+  #
+  # Configuration is declared entirely in a ConfigMap and mounted read-only:
+  # Reposilite's file-backed shared configuration is immutable, so no database
+  # bootstrap or REST setup runs at startup. Proxied artifact storage MUST be
+  # enabled explicitly (`store: true`); Reposilite does not cache proxied
+  # artifacts by default.
+  maven:
+    enabled: true
+    serviceName: maven
+    # Replicas do not share a warm cache: each owns its data directory. Keep one
+    # replica (highest hit ratio) unless the cache volume is RWX-shared.
+    replicaCount: 1
+    image:
+      # Official Reposilite image. 3.6+ is required for resolutionCacheMaxEntries,
+      # which Maven Central's 429 guidance recommends for broad proxies.
+      repository: dzikoysk/reposilite
+      tag: "3.6.3"
+      pullPolicy: IfNotPresent
+    portName: maven
+    port: 8081
+    protocol: TCP
+    # Repository served by this instance. Requests look like
+    # http://<serviceName>.<ns>.svc.cluster.local/<repositoryId>/<group>/<artifact>/...
+    repositoryId: releases
+    visibility: PUBLIC
+    # PRIORITIZE_UPSTREAM_METADATA keeps new releases visible; STRICT would serve
+    # only cached content (offline mode).
+    storagePolicy: PRIORITIZE_UPSTREAM_METADATA
+    # Upstream to proxy. Default is Maven Central; set an internal Maven
+    # repository here to layer this cache in front of an existing mirror.
+    upstreamUrl: https://repo.maven.apache.org/maven2/
+    # Cache proxied artifacts locally. This is REQUIRED for any acceleration:
+    # false turns this into a pass-through proxy that still fetches every
+    # artifact from upstream.
+    store: true
+    # How long maven-metadata.xml may be served from cache before it is refetched.
+    # 0 means always refetch (Reposilite default) and reproduces the upstream
+    # traffic we are trying to remove. Maven Central guidance: 300-3600 seconds.
+    metadataMaxAge: 600
+    # Caches metadata routing decisions. 0 disables it; 2048+ is recommended when
+    # proxying a broad ecosystem such as Maven Central.
+    resolutionCacheMaxEntries: 2048
+    # Probe mirrors concurrently for metadata. Only meaningful with more than one
+    # proxied mirror; leave false for a single upstream.
+    parallelMetadataLookup: false
+    env:
+      # JVM heap. The resolution cache needs roughly 1 MB of heap per ~3000
+      # entries, so 1g is ample for a 2048-entry cache plus request handling.
+      javaOpts: -Xms512m -Xmx1g
+      connectTimeoutSeconds: 3
+      readTimeoutSeconds: 15
+      # Storage quota for the repository ("90%", "500MB", "10GB", ...). Left
+      # unset so the whole volume is usable; the PVC is the real bound. An
+      # unverified behaviour of a reached quota is that writes may be rejected
+      # rather than evicted, which would break dependency resolution, so size the
+      # volume and monitor usage instead of relying on the quota.
+      quota: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+        ephemeral-storage: 20Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+        # Must stay >= persistence.emptyDir.mavenSizeLimit: the emptyDir fallback
+        # otherwise trips container-level eviction before the volume fills, which
+        # is what the "quota rule" in docs/package-mirror.md warns about. This is
+        # also the headroom for the cache when a PVC is used instead.
+        ephemeral-storage: 100Gi
+    # Deployment update strategy. Empty selects a topology-aware default:
+    # Recreate when persistence is enabled, because a ReadWriteOnce volume cannot
+    # be attached to a replacement Pod while the outgoing Pod still holds it, so
+    # a surging RollingUpdate can leave the new Pod stuck ContainerCreating.
+    # Without persistence the shared packageMirror.deployment.strategy applies.
+    # Set this explicitly to override (for example with a ReadWriteMany claim,
+    # RollingUpdate is safe).
+    strategy: {}
+    # Enabled=false matches every other backend, so a default install needs no
+    # StorageClass. That means the cache is an emptyDir and is lost on restart,
+    # which costs a cold refill from upstream. Enable this for any environment
+    # that relies on the cache to keep Maven Central traffic (and 429s) down.
+    #
+    # The data directory holds the cached artifacts (and Reposilite's sqlite
+    # database for shared settings). When enabling it on a cluster that runs the
+    # official image as a non-root user, set packageMirror.podSecurityContext.fsGroup
+    # so the volume is writable.
+    persistence:
+      enabled: false
+      existingClaim: ""
+      accessModes:
+        - ReadWriteOnce
+      size: 100Gi
+      storageClassName: ""
+      annotations: {}
+    # Generic directory-size sidecar for this pod's /app/data, exposed on its own
+    # headless service and folded into the aggregator as
+    # package_mirror_cache_used_bytes{target="maven"}. The main package-mirror
+    # metrics service covers only the shared-pod backends, so Maven is scraped
+    # separately.
+    cacheMetrics:
+      enabled: true
+      portName: cache-metrics
+      port: 9300
+      dirStatsTtlSeconds: 60
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+          ephemeral-storage: 100Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+          ephemeral-storage: 200Mi
+    # Reposilite initialization plus first upstream fetches can take a while on a
+    # cold volume; the startup probe absorbs that before liveness can restart the
+    # container in a loop.
+    startupProbe:
+      failureThreshold: 30
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+    livenessProbe:
+      initialDelaySeconds: 15
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
+      successThreshold: 1
+    readinessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 3
+      failureThreshold: 3
+      successThreshold: 1
+
   # Docker registry pull-through caches for image pulls (for example BuildKit
   # Dockerfile FROM). Each mirror is one Docker Distribution proxy instance with
   # exactly one upstream remoteUrl, so DockerHub and each private registry
@@ -1102,6 +1246,11 @@ packageMirror:
       # Fallback only: used when registry.persistence is disabled and the
       # mirror cache sits on a node-local emptyDir.
       registrySizeLimit: 10Gi
+      # Fallback only: used when maven.persistence is disabled and the Reposilite
+      # data directory sits on a node-local emptyDir. Maven artifacts are much
+      # larger than pip/npm packages, so keep this aligned with
+      # maven.resources.limits.ephemeral-storage.
+      mavenSizeLimit: 100Gi
   
   ingress:
     enabled: false

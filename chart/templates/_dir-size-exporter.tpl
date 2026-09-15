@@ -1,20 +1,76 @@
 {{/*
-Generic directory-size metrics exporter (stdlib-only Python).
+Cache-usage sidecar container for one directory, sharing the metric shape of
+the registry mirror and buildkitd exporters. Authored at zero indentation;
+callers render it with `nindent 8` under a `containers:` list.
 
-Reports used bytes (recursive walk, cached) and total filesystem capacity
-(statvfs) for one or more watched directories, as Prometheus text on /metrics.
-Shared by the buildkit-service cache sidecar and the registry-mirror cache
-sidecar so both expose identical metric shapes. Configured purely via env:
-
-  METRICS_PORT           listen port (default 9300)
-  METRIC_PREFIX          metric name prefix (default "dir")
-  TARGETS                comma-separated "label=path" pairs, e.g.
-                         "buildkit=/var/lib/buildkit". A bare path uses its
-                         basename as the label.
-  DIR_STATS_TTL_SECONDS  cache TTL for the recursive walk (default 60)
-
-Only single { } braces are used so Helm leaves the body untouched.
+Params:
+  root        the top-level chart context ($ / .)
+  config      the <backend>.cacheMetrics values map (port/portName/resources/...)
+  prefix      METRIC_PREFIX value (for example "package_mirror")
+  targets     TARGETS value, "label=path" pairs
+  mountName   volume name holding the exported script
+  mountPath   volume name holding the watched directory
+  subPath     optional subPath when the watched volume is shared
+  protocol    container port protocol (defaults to TCP)
 */}}
+{{- define "buildkit-service.dirSizeExporterContainer" -}}
+{{- $root := .root -}}
+{{- $config := .config -}}
+{{- $protocol := default "TCP" .protocol -}}
+- name: cache-metrics
+  image: {{ printf "%s:%s" $root.Values.packageMirror.metrics.image.repository $root.Values.packageMirror.metrics.image.tag }}
+  imagePullPolicy: {{ $root.Values.packageMirror.metrics.image.pullPolicy }}
+  securityContext:
+    {{- toYaml $root.Values.packageMirror.securityContext | nindent 4 }}
+  command:
+    - python3
+    - /etc/package-mirror/dir-size-exporter.py
+  env:
+    - name: METRICS_PORT
+      value: {{ $config.port | quote }}
+    - name: METRIC_PREFIX
+      value: {{ .prefix | quote }}
+    - name: TARGETS
+      value: {{ .targets | quote }}
+    - name: DIR_STATS_TTL_SECONDS
+      value: {{ $config.dirStatsTtlSeconds | quote }}
+  ports:
+    - name: {{ $config.portName }}
+      containerPort: {{ $config.port }}
+      protocol: {{ $protocol }}
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: {{ $config.portName }}
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: {{ $config.portName }}
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  resources:
+    {{- toYaml ($config.resources | default $root.Values.packageMirror.metrics.resources) | nindent 4 }}
+  volumeMounts:
+    - name: {{ .mountName }}
+      mountPath: {{ .mountPath }}
+      {{- with .subPath }}
+      subPath: {{ . }}
+      {{- end }}
+      readOnly: true
+    - name: {{ include "buildkit-service.packageMirror.configVolumeName" $root }}
+      mountPath: /etc/package-mirror/dir-size-exporter.py
+      subPath: dir-size-exporter.py
+      readOnly: true
+{{- end -}}
+
 {{- define "buildkit-service.dirSizeExporterScript" -}}
 #!/usr/bin/env python3
 """Generic directory-size metrics exporter (stdlib only)."""

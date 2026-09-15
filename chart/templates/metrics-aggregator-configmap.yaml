@@ -26,6 +26,17 @@
     "match_prefix" "package_mirror_"
     "url" (printf "http://%s.%s.svc.%s:%d/metrics" .Values.packageMirror.metrics.serviceName $pmns $domain (int .Values.packageMirror.service.port))) }}
 {{- end }}
+{{- if and .Values.packageMirror.enabled .Values.packageMirror.maven.enabled .Values.packageMirror.maven.cacheMetrics.enabled }}
+{{- /* Each replica owns an independent data directory and dirsize_sum always
+   aggregates across the resolved pod IPs, so summing is correct here. */}}
+{{- $jobs = append $jobs (dict
+    "kind" "dirsize_sum"
+    "name" "package_mirror_maven"
+    "prefix" "package_mirror"
+    "dns" (printf "%s-metrics.%s.svc.%s" .Values.packageMirror.maven.serviceName $pmns $domain)
+    "port" (int .Values.packageMirror.maven.cacheMetrics.port)
+    "path" "/metrics") }}
+{{- end }}
 {{- if .Values.packageMirror.enabled }}
 {{- $selectedMirrors := include "buildkit-service.packageMirror.selectedRegistryMirrors" . | fromYamlArray }}
 {{- $cacheAgg := "sum" }}
