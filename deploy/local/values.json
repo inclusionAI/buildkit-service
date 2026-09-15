@@ -1,0 +1,213 @@
+{
+  "namespaceOverride": "buildkit-dev",
+  "imagePullPolicy": "Never",
+  "imagePullSecrets": {
+    "create": false,
+    "name": ""
+  },
+  "buildkit": {
+    "enabled": true
+  },
+  "buildctlDaemon": {
+    "enabled": false
+  },
+  "buildctlDaemonCanary": {
+    "enabled": false
+  },
+  "buildkitdCacheMetrics": {
+    "enabled": false
+  },
+  "metricsAggregator": {
+    "enabled": false
+  },
+  "deployment": {
+    "replicas": 1,
+    "strategy": {
+      "type": "Recreate",
+      "rollingUpdate": null
+    }
+  },
+  "terminationGracePeriodSeconds": 5,
+  "affinity": null,
+  "tolerations": [],
+  "resources": {
+    "requests": {
+      "cpu": "250m",
+      "memory": "256Mi",
+      "ephemeral-storage": "1Gi"
+    },
+    "limits": {
+      "memory": "2Gi",
+      "ephemeral-storage": "4Gi"
+    }
+  },
+  "volumes": [
+    {
+      "name": "run-buildkit",
+      "emptyDir": {}
+    },
+    {
+      "name": "lib-buildkit",
+      "persistentVolumeClaim": {
+        "claimName": "buildkit-cache"
+      }
+    }
+  ],
+  "buildkitdConfig": {
+    "registryConfigs": [
+      {
+        "host": "registry.buildkit-dev.svc.cluster.local:5000",
+        "http": true
+      }
+    ],
+    "worker": {
+      "oci": {
+        "gcKeepStorageMB": 1024,
+        "gcPolicies": [
+          {
+            "all": true,
+            "keepBytes": 1073741824
+          }
+        ]
+      }
+    }
+  },
+  "registries": [],
+  "packageMirror": {
+    "enabled": true,
+    "namespaceOverride": "buildkit-dev",
+    "nodeSelector": {},
+    "tolerations": [],
+    "affinity": null,
+    "deployment": {
+      "replicaCount": 1,
+      "strategy": {
+        "type": "Recreate",
+        "rollingUpdate": null
+      }
+    },
+    "autoscaling": {
+      "enabled": false
+    },
+    "podDisruptionBudget": {
+      "enabled": false
+    },
+    "topologySpread": {
+      "enabled": false
+    },
+    "metrics": {
+      "enabled": false
+    },
+    "gc": {
+      "enabled": false
+    },
+    "persistence": {
+      "enabled": true,
+      "size": "5Gi",
+      "storageClassName": "standard"
+    },
+    "pip": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "image": {
+        "pullPolicy": "Never"
+      }
+    },
+    "npm": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "gc": {
+        "enabled": false
+      },
+      "image": {
+        "pullPolicy": "Never"
+      }
+    },
+    "aptYum": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "gc": {
+        "enabled": false
+      },
+      "image": {
+        "pullPolicy": "Never"
+      }
+    },
+    "git": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "replicaCount": 1,
+      "affinity": null,
+      "persistence": {
+        "enabled": true,
+        "size": "2Gi",
+        "storageClassName": "standard",
+        "accessModes": [
+          "ReadWriteOnce"
+        ]
+      },
+      "image": {
+        "pullPolicy": "Never"
+      }
+    },
+    "registry": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "deployment": {
+        "replicaCount": 1
+      },
+      "persistence": {
+        "enabled": false
+      },
+      "cacheMetrics": {
+        "enabled": false
+      }
+    }
+  },
+  "fullnameOverride": "buildkit-service"
+}
