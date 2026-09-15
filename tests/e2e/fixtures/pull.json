@@ -1,0 +1,18 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "REPLACED",
+    "namespace": "e2e"
+  },
+  "spec": {
+    "restartPolicy": "Never",
+    "containers": [
+      {
+        "name": "verify",
+        "image": "REPLACED",
+        "imagePullPolicy": "Always"
+      }
+    ]
+  }
+}

@@ -8,7 +8,8 @@
 #   docker build -t <registry>/<namespace>/apt-cacher-ng:3.7.5 chart/images/apt-cacher-ng
 #   docker push <registry>/<namespace>/apt-cacher-ng:3.7.5
 # Then set aptYum.image.repository/tag in values.yaml accordingly.
-FROM debian:trixie-slim
+ARG BASE_IMAGE=debian:trixie-slim
+FROM ${BASE_IMAGE}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends apt-cacher-ng ca-certificates \

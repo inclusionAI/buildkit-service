@@ -1,0 +1,21 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "batch",
+    "namespace": "e2e"
+  },
+  "spec": {
+    "containers": [
+      {
+        "name": "batch",
+        "image": "REPLACED",
+        "imagePullPolicy": "Never",
+        "command": [
+          "sleep",
+          "infinity"
+        ]
+      }
+    ]
+  }
+}

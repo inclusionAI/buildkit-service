@@ -13,3 +13,5 @@ kubeconfig
 kubeconfig.*
 **/__pycache__
 **/*.pyc
+artifacts
+.venv

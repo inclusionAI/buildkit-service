@@ -14,20 +14,29 @@
 #   docker buildx build --build-arg BASE_IMAGE=moby/buildkit:latest ...
 ARG BASE_IMAGE=ghcr.io/nydusaccelerator/buildkit:v0.31.1-nydus.1
 
-FROM golang:1.23 AS builder
+ARG GO_IMAGE=golang:1.23
+ARG ALPINE_IMAGE=alpine:3.22
+
+FROM ${GO_IMAGE} AS builder
 WORKDIR /src
+# Batch result storage uses LMDB. Link it statically so the runtime base does
+# not need a matching libc or a separately installed liblmdb.
+RUN apt-get update && apt-get install -y --no-install-recommends liblmdb-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
+COPY cmd/ cmd/
+COPY pkg/ pkg/
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o /out/buildctl-daemon ./cmd/buildctl-daemon && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -o /out/buildctl-batch ./cmd/buildctl-batch && \
+    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -tags netgo,osusergo -ldflags '-linkmode external -extldflags "-static"' \
+    -o /out/buildctl-batch ./cmd/buildctl-batch && \
     GOBIN=/out CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3
 
-FROM alpine:3.22 AS cni-plugins
+FROM ${ALPINE_IMAGE} AS cni-plugins
 ARG CNI_VERSION=v1.1.1
 ARG TARGETOS
 ARG TARGETARCH

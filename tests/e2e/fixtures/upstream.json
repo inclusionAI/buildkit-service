@@ -1,0 +1,75 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+      "name": "fixture",
+      "namespace": "e2e",
+      "labels": {
+        "app": "fixture"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "fixture",
+          "image": "REPLACED",
+          "imagePullPolicy": "Never",
+          "env": [
+            {
+              "name": "REGISTRY_URL",
+              "value": "http://REPLACED:5000"
+            }
+          ],
+          "readinessProbe": {
+            "httpGet": {
+              "path": "/health",
+              "port": 80
+            },
+            "periodSeconds": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+      "name": "fixture",
+      "namespace": "e2e"
+    },
+    "spec": {
+      "selector": {
+        "app": "fixture"
+      },
+      "ports": [
+        {
+          "port": 80,
+          "targetPort": 80
+        }
+      ]
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+      "name": "client",
+      "namespace": "e2e"
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "client",
+          "image": "REPLACED",
+          "imagePullPolicy": "Never",
+          "command": [
+            "sleep",
+            "infinity"
+          ]
+        }
+      ]
+    }
+  }
+]

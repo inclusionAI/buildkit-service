@@ -1,0 +1,9 @@
+[project]
+name = "buildkit-service-tools"
+version = "0.0.0"
+description = "Python tooling and tests for BuildKit Service"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false

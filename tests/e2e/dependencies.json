@@ -1,0 +1,125 @@
+{
+  "images": {
+    "buildkit": {
+      "repository": "ghcr.io/nydusaccelerator/buildkit",
+      "version": "v0.31.1-nydus.1",
+      "platforms": {
+        "amd64": "sha256:422cc007314714cd81821fbef03e838d6f09b71da94fa62acadf99fa333c6ed2"
+      },
+      "source": "https://github.com/nydusaccelerator/buildkit",
+      "license": "Apache-2.0"
+    },
+    "node": {
+      "repository": "kindest/node",
+      "version": "v1.34.0",
+      "platforms": {
+        "amd64": "sha256:ede5bb6984830375d264e41b7169d03643f586d3e35316bf5229eaeb12bb18e0",
+        "arm64": "sha256:3229b411042d457a44ea8807e90520e4b7da8700a8617ed20f0c4cb799bebe2b"
+      },
+      "source": "https://github.com/kubernetes-sigs/kind",
+      "license": "Apache-2.0"
+    },
+    "pip": {
+      "repository": "epicwink/proxpi",
+      "version": "1.3.0",
+      "platforms": {
+        "amd64": "sha256:20b146d4bc773a82d57c88871cdaf51ebcc1fe1fad2956b9e9d159995855555b",
+        "arm64": "sha256:34375f912cb5aec5af2f60a653bc2cf91671b2caccda0a29ff4adfb7e28aef6f"
+      },
+      "source": "https://github.com/EpicWink/proxpi",
+      "license": "MIT"
+    },
+    "npm": {
+      "repository": "verdaccio/verdaccio",
+      "version": "6.1.6",
+      "platforms": {
+        "amd64": "sha256:f8c2a9f02855ef24d3a98a92fa30ac9d14bc2a46ea687e1c011fb7220f15006c",
+        "arm64": "sha256:d0aa2476d59758098c9cd03a2067ad599b422599b30cf04191aba1a16f3187d1"
+      },
+      "source": "https://github.com/verdaccio/verdaccio",
+      "license": "MIT"
+    },
+    "python": {
+      "repository": "python",
+      "version": "3.12-alpine",
+      "platforms": {
+        "amd64": "sha256:78e98729f8fc4099e53cffb3fe59fd15b18dfa4ace8c914dee0cefa5320068eb",
+        "arm64": "sha256:6c251882dcd56a1b1f20e174a09465f68a6b85c1d066becd954889099177ec34"
+      },
+      "source": "https://github.com/docker-library/python",
+      "license": "PSF-2.0; Alpine package licenses"
+    },
+    "alpine": {
+      "repository": "alpine",
+      "version": "3.22",
+      "platforms": {
+        "amd64": "sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6",
+        "arm64": "sha256:2c9d26f410d032d5b1525aa8a873e238b05b90c4ae8618743d4311f0cc827e37"
+      },
+      "source": "https://github.com/alpinelinux/docker-alpine",
+      "license": "Alpine package licenses"
+    },
+    "go": {
+      "repository": "golang",
+      "version": "1.25.12",
+      "platforms": {
+        "amd64": "sha256:dd651521feb94cf992bdab3df2fbf3f58e7415f34f02b0ead741f605a8c0f08e",
+        "arm64": "sha256:e911f2ff66025cbb90770dd1356526980409da3747264b3c6033b92e10731a8b"
+      },
+      "source": "https://github.com/docker-library/golang",
+      "license": "BSD-3-Clause; Debian package licenses"
+    },
+    "debian": {
+      "repository": "debian",
+      "version": "trixie-slim",
+      "platforms": {
+        "amd64": "sha256:abc9cb88a5587630d7f915f47b23b0668fe250fbfc6457aa4d52b534c1bbf73f",
+        "arm64": "sha256:7215f78f35ffe58fe13f244fac9c4f21326d55187271fbb3e1a8aa5cc7e387ab"
+      },
+      "source": "https://github.com/debuerreotype/docker-debian-artifacts",
+      "license": "Debian package licenses"
+    },
+    "registry": {
+      "repository": "registry",
+      "version": "3.0.0",
+      "platforms": {
+        "amd64": "sha256:5b12b22f21522fe69443079df04c0f3f42cb9977857f3c20404386652a6c6d8e",
+        "arm64": "sha256:832ef18332f0dde1edff9b45d796231c68f9b9108cf91acb5e6fac450b8fbdcb"
+      },
+      "source": "https://github.com/distribution/distribution",
+      "license": "Apache-2.0"
+    }
+  },
+  "tools": {
+    "kind": {
+      "version": "0.32.0",
+      "url": "https://github.com/kubernetes-sigs/kind/releases/download/v{version}/kind-{os}-{arch}",
+      "sha256": {
+        "darwin-amd64": "295ac6d0d634c9819c9907df45e3017d1f13166bd13c3404c45e79f7faa47498",
+        "darwin-arm64": "dca67911095a110c2b5c36e26df6cac860c602033e456c0db47be498cdef1ebb",
+        "linux-amd64": "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54",
+        "linux-arm64": "b92cd615e97585de8ddade28ed5cd7feb4248d717c233eea5b03c37298900f5d"
+      }
+    },
+    "kubectl": {
+      "version": "1.34.0",
+      "url": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubectl",
+      "sha256": {
+        "darwin-amd64": "a5904061dd5c8e57d55e52c78fa23790e76de30924b26ba31be891e75710d7a9",
+        "darwin-arm64": "d491f4c47c34856188d38e87a27866bd94a66a57b8db3093a82ae43baf3bb20d",
+        "linux-amd64": "cfda68cba5848bc3b6c6135ae2f20ba2c78de20059f68789c090166d6abc3e2c",
+        "linux-arm64": "00b182d103a8a73da7a4d11e7526d0543dcf352f06cc63a1fde25ce9243f49a0"
+      }
+    },
+    "helm": {
+      "version": "3.19.0",
+      "url": "https://get.helm.sh/helm-v{version}-{os}-{arch}.tar.gz",
+      "sha256": {
+        "darwin-amd64": "09a108c0abda42e45af172be65c49125354bf7cd178dbe10435e94540e49c7b9",
+        "darwin-arm64": "31513e1193da4eb4ae042eb5f98ef9aca7890cfa136f4707c8d4f70e2115bef6",
+        "linux-amd64": "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496",
+        "linux-arm64": "440cf7add0aee27ebc93fada965523c1dc2e0ab340d4348da2215737fc0d76ad"
+      }
+    }
+  }
+}

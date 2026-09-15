@@ -22,3 +22,7 @@ kubeconfig
 kubeconfig.*
 __pycache__/
 *.pyc
+
+# Local end-to-end runs: logs, isolated kubeconfigs and Docker state.
+/artifacts/
+/.venv/

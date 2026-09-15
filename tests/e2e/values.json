@@ -1,0 +1,218 @@
+{
+  "namespaceOverride": "e2e",
+  "imagePullPolicy": "Never",
+  "imagePullSecrets": {
+    "create": false,
+    "name": ""
+  },
+  "buildkit": {
+    "enabled": true
+  },
+  "buildctlDaemon": {
+    "enabled": false
+  },
+  "buildctlDaemonCanary": {
+    "enabled": false
+  },
+  "buildkitdCacheMetrics": {
+    "enabled": false
+  },
+  "metricsAggregator": {
+    "enabled": false
+  },
+  "deployment": {
+    "replicas": 1
+  },
+  "terminationGracePeriodSeconds": 5,
+  "affinity": null,
+  "tolerations": [],
+  "resources": {
+    "requests": {
+      "cpu": "250m",
+      "memory": "256Mi",
+      "ephemeral-storage": "1Gi"
+    },
+    "limits": {
+      "memory": "2Gi",
+      "ephemeral-storage": "4Gi"
+    }
+  },
+  "volumes": [
+    {
+      "name": "run-buildkit",
+      "emptyDir": {}
+    },
+    {
+      "name": "lib-buildkit",
+      "emptyDir": {
+        "sizeLimit": "3Gi"
+      }
+    }
+  ],
+  "buildkitdConfig": {
+    "registryConfigs": [
+      {
+        "host": "registry.e2e.test:5000",
+        "http": true
+      }
+    ],
+    "worker": {
+      "oci": {
+        "gcKeepStorageMB": 1024,
+        "gcPolicies": [
+          {
+            "all": true,
+            "keepBytes": 1073741824
+          }
+        ]
+      }
+    }
+  },
+  "registries": [
+    {
+      "name": "fixture",
+      "host": "fixture.e2e.svc.cluster.local",
+      "remoteUrl": "http://fixture.e2e.svc.cluster.local",
+      "mirror": {
+        "serviceName": "registry-fixture",
+        "always": true,
+        "enabled": true
+      }
+    }
+  ],
+  "packageMirror": {
+    "enabled": true,
+    "namespaceOverride": "e2e",
+    "nodeSelector": {},
+    "tolerations": [],
+    "affinity": null,
+    "deployment": {
+      "replicaCount": 1
+    },
+    "autoscaling": {
+      "enabled": false
+    },
+    "podDisruptionBudget": {
+      "enabled": false
+    },
+    "topologySpread": {
+      "enabled": false
+    },
+    "metrics": {
+      "enabled": false
+    },
+    "gc": {
+      "enabled": false
+    },
+    "persistence": {
+      "enabled": false,
+      "emptyDir": {
+        "pipSizeLimit": "512Mi",
+        "npmSizeLimit": "512Mi",
+        "aptYumSizeLimit": "512Mi",
+        "gitSizeLimit": "512Mi",
+        "registrySizeLimit": "512Mi"
+      }
+    },
+    "pip": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "env": {
+        "indexUrl": "http://fixture.e2e.svc.cluster.local/simple/",
+        "cacheSize": "67108864",
+        "downloadTimeoutSeconds": 10
+      }
+    },
+    "npm": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "env": {
+        "upstreamUrl": "http://fixture.e2e.svc.cluster.local/",
+        "nodeOptions": "--max-old-space-size=256"
+      },
+      "gc": {
+        "enabled": false
+      }
+    },
+    "aptYum": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "env": {
+        "aptMirror": "http://fixture.e2e.svc.cluster.local",
+        "alpineMirror": "http://fixture.e2e.svc.cluster.local/alpine"
+      },
+      "gc": {
+        "enabled": false
+      }
+    },
+    "git": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "replicaCount": 1,
+      "affinity": null,
+      "env": {
+        "allowPrivateUpstreams": true,
+        "upstreamScheme": "http",
+        "maxDiskBytes": "134217728"
+      }
+    },
+    "registry": {
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "deployment": {
+        "replicaCount": 1
+      },
+      "persistence": {
+        "enabled": false
+      },
+      "cacheMetrics": {
+        "enabled": false
+      }
+    }
+  }
+}
