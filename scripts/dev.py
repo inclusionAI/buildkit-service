@@ -159,7 +159,7 @@ class Dev:
 
     def images_available(self):
         images = self.state['images']
-        if set(images) != {'service', 'apt', 'git', 'pip', 'npm', 'registry'}:
+        if set(images) != {'service', 'apt', 'git', 'pip', 'npm', 'registry', 'maven'}:
             return False
         for tag in images.values():
             # A retained state file is not proof that Docker still has the image.
@@ -185,7 +185,7 @@ class Dev:
                     args += ['--build-arg', key + '=' + os.environ['DEV_BUILD_PROXY']]
             self.command(*args, '.' if name == 'service' else 'chart/images/' + dockerfile, timeout=1200)
             images[name] = tag
-        for name in ('pip', 'npm', 'registry'):
+        for name in ('pip', 'npm', 'registry', 'maven'):
             self.command('docker', 'pull', '--platform=linux/amd64', self.image(name))
             tag = self.state['name'] + '-' + name + ':dependency'
             self.command('docker', 'tag', self.image(name), tag)
@@ -278,7 +278,7 @@ class Dev:
         self.recover_helm()
         values = json.loads((ROOT / 'deploy/local/values.json').read_text())
         values['image'] = self.state['images']['service']
-        for name, section in [('apt', 'aptYum'), ('git', 'git'), ('pip', 'pip'), ('npm', 'npm')]:
+        for name, section in [('apt', 'aptYum'), ('git', 'git'), ('pip', 'pip'), ('npm', 'npm'), ('maven', 'maven')]:
             repository, tag = self.state['images'][name].rsplit(':', 1)
             values['packageMirror'][section]['image'].update(repository=repository, tag=tag)
         path = DIRECTORY / 'values.json'

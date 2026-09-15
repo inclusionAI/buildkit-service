@@ -18,6 +18,15 @@ class DependencyTests(unittest.TestCase):
         runner.command = Mock(return_value='version')
         return runner
 
+    def test_pre_maven_image_state_requires_rebuild(self):
+        runner = self.runner()
+        runner.state = {'images': {name: name + ':old' for name in
+                                  ('service', 'apt', 'git', 'pip', 'npm', 'registry')}}
+        self.assertFalse(runner.images_available())
+        runner.command.assert_not_called()
+        runner.state['images']['maven'] = 'maven:loaded'
+        self.assertTrue(runner.images_available())
+
     def test_missing_cached_tool_reports_setup_without_system_fallback(self):
         runner = self.runner()
         with tempfile.TemporaryDirectory() as directory, patch.object(dev, 'ROOT', Path(directory)), \

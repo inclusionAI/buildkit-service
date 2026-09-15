@@ -121,10 +121,30 @@ def check_registry_layer_cache(expected):
     layer = manifest['layers'][0]
     path = '/v2/base/blobs/' + layer['digest']
     before = stats()
-    first, second = fetch(base + 'blobs/' + layer['digest']), fetch(base + 'blobs/' + layer['digest'])
-    check(first == second and len(first) == layer['size'], 'Registry layer bytes mismatch')
+    url = base + 'blobs/' + layer['digest']
+    first = fetch(url)
+    check(len(first) == layer['size'], 'Registry layer bytes mismatch')
     check('sha256:' + hashlib.sha256(first).hexdigest() == layer['digest'], 'Registry layer digest mismatch')
-    check(delta(before, path) == expected, 'Registry layer cache unexpectedly refetched')
+    check(delta(before, path) == expected, 'Registry initial layer request count mismatch')
+    if expected:
+        wait_for_registry_cache(url, path, first)
+    # Keep the warm-cache assertion strict, including after mirror recovery.
+    before = stats()
+    check(fetch(url) == first and fetch(url) == first, 'Registry cached layer bytes mismatch')
+    check(delta(before, path) == 0, 'Registry warm layer cache unexpectedly refetched')
+
+
+def wait_for_registry_cache(url, path, content, timeout=30):
+    # Distribution streams bytes to the client before committing its blob writer.
+    # Receiving the whole response is not a cache-commit acknowledgement.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        before = stats()
+        check(fetch(url) == content, 'Registry cached layer bytes mismatch')
+        if delta(before, path) == 0:
+            return
+        time.sleep(0.2)
+    raise RuntimeError(f'Registry layer cache did not become warm within {timeout}s: {path}')
 
 
 def wait_for_mirror_routes(timeout=60):

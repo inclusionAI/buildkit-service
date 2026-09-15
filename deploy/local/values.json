@@ -207,6 +207,37 @@
       "cacheMetrics": {
         "enabled": false
       }
+    },
+    "maven": {
+      "replicaCount": 1,
+      "image": {
+        "pullPolicy": "Never"
+      },
+      "cacheMetrics": {
+        "enabled": false
+      },
+      "env": {
+        "javaOpts": "-Xms128m -Xmx512m"
+      },
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "256Mi",
+          "ephemeral-storage": "128Mi"
+        },
+        "limits": {
+          "memory": "1Gi",
+          "ephemeral-storage": "2Gi"
+        }
+      },
+      "persistence": {
+        "enabled": true,
+        "size": "2Gi",
+        "storageClassName": "standard",
+        "accessModes": [
+          "ReadWriteOnce"
+        ]
+      }
     }
   },
   "fullnameOverride": "buildkit-service"

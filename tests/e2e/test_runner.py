@@ -17,6 +17,18 @@ class CleanupTests(unittest.TestCase):
                       'registry': 'bks-e2e-example-registry', 'images': {}}
         return test
 
+    def test_maven_deployment_uses_loaded_image_without_public_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            test = self.create_run(directory)
+            test.state['images'] = {name: {'tag': 'loaded-' + name + ':test'}
+                                    for name in ('service', 'apt', 'git', 'pip', 'npm', 'registry', 'maven')}
+            with patch.object(test, 'command'), patch.object(test, 'wait_ready'):
+                test.deploy_chart()
+            values = json.loads((Path(directory) / 'values.json').read_text())
+            maven = values['packageMirror']['maven']
+            self.assertEqual(maven['image'], {'repository': 'loaded-maven', 'tag': 'test', 'pullPolicy': 'Never'})
+            self.assertFalse(maven['cacheMetrics']['enabled'])
+
     def test_foreign_registry_is_never_removed(self):
         with tempfile.TemporaryDirectory() as directory:
             test = self.create_run(directory)
@@ -325,6 +337,26 @@ class BuildContextTests(unittest.TestCase):
 
 
 class CacheAssertionTests(unittest.TestCase):
+    def test_registry_cache_waits_for_commit(self):
+        import verify
+        with patch.object(verify, 'stats', return_value={}), \
+             patch.object(verify, 'delta', side_effect=[1, 0]), \
+             patch.object(verify, 'fetch', return_value=b'layer') as fetch, \
+             patch.object(verify.time, 'sleep') as sleep:
+            verify.wait_for_registry_cache('url', '/blob', b'layer')
+        self.assertEqual(fetch.call_count, 2)
+        sleep.assert_called_once_with(0.2)
+
+    def test_registry_cache_that_keeps_refetching_fails(self):
+        import verify
+        with patch.object(verify, 'stats', return_value={}), \
+             patch.object(verify, 'delta', return_value=1), \
+             patch.object(verify, 'fetch', return_value=b'layer'), \
+             patch.object(verify.time, 'sleep'), \
+             patch.object(verify.time, 'monotonic', side_effect=[0, 0, 31]):
+            with self.assertRaisesRegex(RuntimeError, 'did not become warm.* /blob'):
+                verify.wait_for_registry_cache('url', '/blob', b'layer')
+
     def test_service_routes_wait_for_connection_without_warming_cache(self):
         import verify
         from unittest.mock import MagicMock

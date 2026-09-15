@@ -111,12 +111,12 @@ Core test traffic stays within the test environment. Synthetic `.deb` / `.apk` b
 - Before cache assertions, the client waits for mirror Service TCP routes with a bounded deadline, without fetching cacheable data. Pod Ready and Service routing converge asynchronously after replacement.
 - A replaced worker resumes builds; a replaced main mirror refetches cold cache entries and serves builds again. Default emptyDir storage does not preserve deleted Pod caches.
 
-HTTP API, the shell wrapper, Nydus snapshotter execution, PVC persistence and production-scale performance are not implied by these checks. The existing `chart/test-package-mirror-remap.py` remains a smaller Docker regression with a separate responsibility.
+Maven coverage is limited to startup and deployed image identity; Maven cache behavior is not asserted. HTTP API, the shell wrapper, Nydus snapshotter execution, PVC persistence and production-scale performance are not implied by these checks. The existing `chart/test-package-mirror-remap.py` remains a smaller Docker regression with a separate responsibility.
 
 Run `make e2e-unit` for fast ownership/cleanup checks. Core E2E results should be reported separately for Mac emulation and native Linux execution.
 
-## Compatibility evidence and current validation status
+## Compatibility evidence
 
 The fully emulated amd64 kind/node attempt on Apple Silicon reached containerd but failed to create Kubernetes control-plane sandboxes with `seccomp is not supported`. The control-plane Pods explicitly requested `RuntimeDefault`. The suite therefore keeps kind/containerd native while retaining production Nydus BuildKit and amd64 workload images. This does not validate native arm64 OCI workloads or seccomp under amd64 emulation.
 
-On 2026-09-15, the native-node / amd64-workload full entry passed on Apple Silicon / OrbStack, including build, push, pull, cache assertions, worker/mirror recovery, log export and cleanup. All 26 tooling, lifecycle and failure-path unit tests passed. Linux amd64 CI is configured to run the same `make e2e` entry natively, but its execution remains unverified; Mac emulation is not native Linux evidence.
+Use the [CI runs](https://github.com/inclusionAI/buildkit-service/actions/workflows/ci.yml) for validation results on a specific revision. Report local results with the tested commit, execution architecture and diagnostic logs; emulated execution does not establish native Linux compatibility.
