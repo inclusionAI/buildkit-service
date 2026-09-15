@@ -82,7 +82,10 @@ data:
     # apt update and yum makecache can otherwise race on volatile repository
     # metadata such as dists/*/Packages.xz and repodata/*.sqlite.bz2, causing
     # truncated transfers while package payload files remain safe to cache.
-    DontCacheRequested: {{ .Values.packageMirror.aptYum.serviceName }}(\.{{ include "buildkit-service.packageMirror.namespace" . }}(\.svc(\.cluster\.local)?)?)?/ .*InRelease$ .*Release$ .*Release\.gpg$ .*dists/.*/(Packages|Sources|Contents|Translation-[^/]*)(\.(gz|xz|bz2|lzma|zst))?$ .*repodata/.* .*APKINDEX\.tar\.gz$
+    DontCacheRequested: {{ .Values.packageMirror.aptYum.serviceName }}(\.{{ include "buildkit-service.packageMirror.namespace" . }}(\.svc(\.cluster\.local)?)?)?/
+    # Exclude metadata after remapping. In acng 3.7.5, request-side bypass
+    # can forward the client Host alongside the remapped upstream Host.
+    DontCacheResolved: .*InRelease$ .*Release$ .*Release\.gpg$ .*dists/.*/(Packages|Sources|Contents|Translation-[^/]*)(\.(gz|xz|bz2|lzma|zst))?$ .*repodata/.* .*APKINDEX\.tar\.gz$
     Remap-ubusec: security.ubuntu.com/ubuntu ; {{ .Values.packageMirror.aptYum.env.aptMirror }}/ubuntu
     Remap-centos: /centos ; {{ .Values.packageMirror.aptYum.env.centosMirror }}
     Remap-epel: /epel ; {{ .Values.packageMirror.aptYum.env.epelMirror }}

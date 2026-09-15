@@ -774,3 +774,19 @@ into ConfigMaps and mounted read-only.
   instead of only raising memory.
 - For private package publishing, per-team indexes, or auth, switch pip to
   devpi or enable verdaccio authentication/publishing separately.
+
+## Docker regression test
+
+Run `python3 chart/test-package-mirror-remap.py` from the repository root with
+Docker and Python 3.12+. Helm is used locally when available, otherwise a public
+Helm container renders the chart. The test builds apt-cacher-ng from this
+checkout, starts a local changing HTTP upstream that rejects duplicate Host
+headers, checks metadata freshness and
+`.deb` / `.apk` cache reuse, then removes its containers, network and image tag.
+Initial image builds/downloads require public network access; no Kubernetes
+cluster, cloud registry credentials or external test harness is required.
+
+To run the same checks against an older chart, use `--chart-dir PATH`. For a
+negative-control comparison that also runs the current chart, use
+`--baseline-ref REF`; it requires the old chart to reproduce both metadata
+failures before checking the current chart.

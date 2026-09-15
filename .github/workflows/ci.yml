@@ -37,6 +37,8 @@ jobs:
         run: helm lint chart/ --values chart/values-quickstart.yaml --set buildctlDaemon.auth.token=ci-lint-placeholder
       - name: Render quickstart profile
         run: helm template chart/ --values chart/values-quickstart.yaml --set buildctlDaemon.auth.token=ci-lint-placeholder > /dev/null
+      - name: Test package-mirror metadata remapping and payload caching
+        run: python3 chart/test-package-mirror-remap.py
       - name: Test package-mirror autoscaling rendering
         run: bash chart/test-package-mirror-autoscaling-render.sh
 
