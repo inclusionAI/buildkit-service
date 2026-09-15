@@ -145,6 +145,10 @@ The referenced Docker config controls target push and manifest-check credentials
 └── pkg/                   # shared libraries (Dockerfile preprocessing, ...)
 ```
 
+## Standalone local development
+
+Use `make dev-setup` and `make dev-up` for a persistent environment built from this checkout. After source changes, run `make dev-rebuild`; `make dev-down` stops applications and preserves data. See [local development](deploy/local/README.md) for requirements, recovery, diagnostics and explicit destructive reset.
+
 ## Building from source
 
 Requires Go 1.23 or newer. The batch CLI requires Linux, a C compiler and LMDB development files (`liblmdb-dev` on Debian/Ubuntu); its result store is unavailable without CGO. Cross-compiling it requires a matching Linux C toolchain and LMDB library. On macOS, build and run the container image or use the local E2E suite. Docker with Buildx is required to build the container images.

@@ -15,6 +15,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Test E2E tooling
         run: make e2e-unit
+      - name: Test standalone development tooling
+        run: make dev-unit
       - name: Set up E2E tools and verify repeatability
         run: |
           make e2e-setup
@@ -69,6 +71,8 @@ jobs:
         run: helm lint chart/ --set buildctlDaemon.auth.token=ci-lint-placeholder
       - name: Render chart
         run: helm template chart/ --set buildctlDaemon.auth.token=ci-lint-placeholder > /dev/null
+      - name: Lint local development profile
+        run: helm lint chart/ --values deploy/local/values.json
       - name: Lint quickstart profile
         run: helm lint chart/ --values chart/values-quickstart.yaml --set buildctlDaemon.auth.token=ci-lint-placeholder
       - name: Render quickstart profile

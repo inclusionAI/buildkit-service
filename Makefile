@@ -52,3 +52,17 @@ e2e-up e2e-test e2e-logs e2e-down:
 
 e2e-unit:
 	$(UV) run --locked python -m unittest discover -s tests/e2e -p 'test_*.py'
+
+export DEV_RESET_CONFIRM
+# Persistent standalone development environment; independent of E2E runs.
+.PHONY: dev-setup dev-up dev-rebuild dev-status dev-logs dev-down dev-reset dev-unit
+dev-setup: e2e-setup
+
+dev-up dev-rebuild: dev-setup
+	$(UV) run --locked python scripts/dev.py $(patsubst dev-%,%,$@)
+
+dev-status dev-logs dev-down dev-reset:
+	$(UV) run --locked python scripts/dev.py $(patsubst dev-%,%,$@)
+
+dev-unit:
+	$(UV) run --locked python -m unittest discover -s tests/dev -p 'test_*.py'
