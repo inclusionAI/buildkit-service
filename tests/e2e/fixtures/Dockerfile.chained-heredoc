@@ -1,0 +1,5 @@
+FROM alpine
+RUN mkdir -p /opt/demo && \
+    cat > /opt/demo/app.conf << 'EOF'
+listen_port=5140
+EOF

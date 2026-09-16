@@ -14,6 +14,7 @@ class Scenarios:
         run = self.run
         run.step('test.package-caches', self.package_caches)
         run.step('test.batch-client', self.prepare_batch_client)
+        run.step('test.heredoc-rejection', self.heredoc_rejection)
         run.step('test.first-build-push-pull', self.build_fixture, 1)
         run.step('test.run-cache-hit', self.build_fixture, 2, True)
         run.step('test.worker-recovery', self.worker_recovery)
@@ -30,6 +31,17 @@ class Scenarios:
         pod['spec']['containers'][0]['image'] = self.run.state['images']['service']['tag']
         self.run.apply(pod)
         self.run.wait_ready()
+
+    def heredoc_rejection(self):
+        self.write_build_context('registry.e2e.test:5000/result:invalid', 'Dockerfile.chained-heredoc')
+        output = self.run.kubectl('-n', 'e2e', 'exec', 'batch', '--', 'sh', '-ec',
+                                 'if buildctl-batch "$@" >/tmp/heredoc-rejection.log 2>&1; then exit 1; fi; cat /tmp/heredoc-rejection.log',
+                                 'reject-build', 'build', '--oci', '--image-dirs', '/tmp/source',
+                                 '--addrs', 'tcp://buildkit-service.e2e.svc.cluster.local:9094',
+                                 '--result', '/tmp/rejected-result', '--logs', '/tmp/rejected-logs',
+                                 '--timeout', '15', '--retry', '0', timeout=45, name='heredoc-rejection')
+        require('Dockerfile line 2: unsupported RUN heredoc' in output and 'standalone RUN cat' in output,
+                'Expected an actionable heredoc rejection before submitting to BuildKit')
 
     def worker_recovery(self):
         self.restart('buildkitd')
@@ -51,9 +63,9 @@ class Scenarios:
         self.check_batch_result(number)
         self.pull_and_run(target, number)
 
-    def write_build_context(self, target):
+    def write_build_context(self, target, dockerfile="Dockerfile.build"):
         self.run.kubectl('-n', 'e2e', 'exec', 'batch', '--', 'mkdir', '-p', '/tmp/source/test')
-        for name, content in [('Dockerfile', (HERE / 'fixtures/Dockerfile.build').read_text()),
+        for name, content in [('Dockerfile', (HERE / 'fixtures' / dockerfile).read_text()),
                               ('metadata.json', json.dumps({'target': target}))]:
             # Small fixtures fit in argv; avoid relying on exec stdin delivery.
             path = '/tmp/source/test/' + name
@@ -106,6 +118,22 @@ class Scenarios:
             time.sleep(2)
         raise RuntimeError(component + ' failed to recover')
 
+    def image_config_digest(self, node, digest):
+        # Classic Docker IDs are config digests; the containerd image store uses
+        # an index/manifest digest. Resolve that exact content, never the tag.
+        nodes = self.run.command(['kind', 'get', 'nodes', '--name', self.run.state['name']]).split()
+        require(node in nodes, 'Image verification node is not owned by this run')
+        for _ in range(2):
+            document = json.loads(self.run.docker('exec', node, 'ctr', '-n', 'k8s.io', 'content', 'get', digest))
+            if 'config' in document:
+                return document['config']['digest']
+            manifests = [item for item in document.get('manifests', [])
+                         if item.get('platform', {}).get('os') == 'linux'
+                         and item.get('platform', {}).get('architecture') == self.run.state['architecture']]
+            require(len(manifests) == 1, 'Expected one target-platform image manifest for ' + digest)
+            digest = manifests[0]['digest']
+        raise RuntimeError('Cannot resolve image config digest from ' + digest)
+
     def verify_image_ids(self):
         pods = json.loads(self.run.kubectl('-n', 'e2e', 'get', 'pods', '-o', 'json'))['items']
         expected = {v['tag']: v['id'] for v in self.run.state['images'].values()}
@@ -114,7 +142,10 @@ class Scenarios:
             for container in pod.get('status', {}).get('containerStatuses', []):
                 ref = container['image'].removeprefix('docker.io/library/')
                 if ref in expected:
-                    require(container['imageID'].endswith(expected[ref]), 'Unexpected deployed image ID: ' + ref)
+                    expected_id = expected[ref]
+                    if not container['imageID'].endswith(expected_id):
+                        expected_id = self.image_config_digest(pod['spec']['nodeName'], expected_id)
+                    require(container['imageID'].endswith(expected_id), 'Unexpected deployed image ID: ' + ref)
                     seen.add(ref)
         require(set(expected) <= seen, 'Some built/loaded images were not verified in running Pods')
         (self.run.directory / 'pods-final.json').write_text(json.dumps(pods, indent=2))

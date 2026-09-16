@@ -63,6 +63,8 @@ The full `make e2e` command normally cleans up after exporting diagnostics. To r
 
 Keep one-off investigation commands and their results in that run's ignored artifacts directory, for example `investigation.md`. Record the failing stage, exact command, exit status and conclusion without credentials. Promote reusable procedures into this guide and required test steps into the Python runner/scenarios. Static container inputs belong in `fixtures/`; add a fixture Shell script only when a substantial fixed container-side procedure benefits from reuse. Make remains the lifecycle command entry point.
 
+The batch-client scenarios also check that chained legacy heredocs fail before submission with an actionable source line, while a supported standalone heredoc is rewritten and built successfully. These assertions use the same source-built service image as the rest of the E2E. Deployed image identity is checked against the recorded Docker digest; when Docker reports an index or manifest digest, the check resolves its target-platform config digest from the owned kind node’s content store before comparing with the Pod image ID. Matching a tag alone is not sufficient.
+
 ## Code map and lifecycle
 
 - `run.py`: preflight, image builds, registry, kind, image loading, DNS, fixtures, Helm, diagnostics and ownership-checked cleanup.

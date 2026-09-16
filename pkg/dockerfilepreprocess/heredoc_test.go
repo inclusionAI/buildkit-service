@@ -1,6 +1,8 @@
 package dockerfilepreprocess
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -138,4 +140,109 @@ func TestTransformLegacyHeredocsKeepsNativeCopy(t *testing.T) {
 	if string(got) != string(input) {
 		t.Fatalf("unexpected change:\n%s", got)
 	}
+}
+
+func TestRejectUnsupportedRunHeredocs(t *testing.T) {
+	for name, header := range map[string]string{
+		"chain":                "RUN mkdir -p /opt/demo && cat > /opt/demo/app.conf << 'EOF'",
+		"continuation":         "RUN mkdir -p /opt/demo && \\\n    chmod 755 /opt/demo && \\\n    cat > /opt/demo/app.conf << 'EOF'",
+		"comment continuation": "RUN true && \\\n# comment\n\n cat > /f <<EOF",
+		"no spaces":            "RUN true&&cat>/f<<EOF",
+		"reverse redirect":     "RUN true; cat <<EOF >/f",
+		"append reverse":       "RUN cat <<EOF >>/f",
+		"pipe":                 "RUN cat <<EOF | tee /f",
+		"subshell":             "RUN (cat >/f <<EOF)",
+		"conditional":          "RUN if true; then cat >/f <<EOF",
+		"tee":                  "RUN tee /f <<EOF",
+		"flags":                "RUN --mount=type=cache,target=/tmp cat >/f <<EOF",
+		"variable target":      "RUN cat > $FILE <<EOF",
+		"expanded target":      "RUN cat > ~/f <<EOF",
+		"command suffix":       "RUN cat > /f <<EOF && chmod 755 /f",
+		"lowercase":            "run true && cat >/f <<EOF",
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := []byte("FROM alpine\n\n" + header + "\nlisten_port=5140\nEOF\n")
+			got, changed, err := TransformLegacyHeredocs(input)
+			if err == nil || !strings.Contains(err.Error(), "line 3:") || !strings.Contains(err.Error(), "COPY") {
+				t.Fatalf("expected actionable error on RUN line, got %v", err)
+			}
+			if got != nil || changed {
+				t.Fatal("failure must not return a partial rewrite")
+			}
+		})
+	}
+}
+
+func TestHeredocPassThroughBoundaries(t *testing.T) {
+	for name, input := range map[string]string{
+		"quoted operator":      "FROM alpine\nRUN echo '<<EOF' \"<<OTHER\"\n",
+		"escaped operator":     "FROM alpine\nRUN echo \\<\\<EOF\n",
+		"comment":              "FROM alpine\nRUN echo hi # <<EOF\n",
+		"here string":          "FROM alpine\nRUN cat <<<hello\n",
+		"shift":                "FROM alpine\nRUN echo $((1 << SHIFT))\n",
+		"json":                 "FROM alpine\nRUN [\"echo\", \"<<EOF\"]\n",
+		"json shell syntax":    "FROM alpine\nRUN [\"echo\", \"` <<EOF\"]\nCOPY [\"` <<EOF\", \"/file\"]\n",
+		"json with flags":      "FROM alpine\nRUN --mount=type=cache,target=/tmp [\"echo\", \"` <<EOF\"]\nCOPY --chown=1000 [\"` <<EOF\", \"/file\"]\n",
+		"native run":           "FROM alpine\nRUN <<'EOF'\nRUN cat > /f <<INNER\nEOF\n",
+		"native run flags":     "FROM alpine\nRUN --mount=type=cache,target=/tmp <<'EOF'\necho hello\nEOF\n",
+		"onbuild copy":         "FROM alpine\nONBUILD COPY <<EOF /f\nRUN cat >> /f <<INNER\nEOF\n",
+		"copy filename":        "FROM alpine\nCOPY foo<<bar /file\nCOPY [\"<<EOF\", \"/file\"]\n",
+		"copy body":            "FROM alpine\nCOPY <<'EOF' /script\nRUN true && cat >/f <<INNER\nEOF\n",
+		"multiple copy bodies": "FROM alpine\nCOPY <<A <<B /out/\nRUN cat >/f <<INNER\nA\nRUN cat >> /f <<INNER\nB\n",
+		"tab stripping":        "FROM alpine\nCOPY <<-EOF /f\n\tRUN cat > /g <<INNER\n\tEOF\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, changed, err := TransformLegacyHeredocs([]byte(input))
+			if err != nil || changed || string(got) != input {
+				t.Fatalf("expected byte-exact pass-through; changed=%v error=%v\n%s", changed, err, got)
+			}
+		})
+	}
+}
+
+func TestRewriteContinuedStandaloneAndSkipItsBody(t *testing.T) {
+	input := "FROM alpine\n  run cat > /file \\\n <<'EOF'\nRUN cat >> /other <<INNER\nEOF\nRUN cat >/ignored <<NOPE\n"
+	// Missing space after cat is outside the legacy rewrite contract, but must
+	// still be rejected rather than forwarded with a misleading frontend error.
+	if _, _, err := TransformLegacyHeredocs([]byte(input)); err == nil || !strings.Contains(err.Error(), "line 6:") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	input = strings.Split(input, "RUN cat >/ignored")[0]
+	want := "FROM alpine\n  COPY <<'EOF' /file\nRUN cat >> /other <<INNER\nEOF\n"
+	got, changed, err := TransformLegacyHeredocs([]byte(input))
+	if err != nil || !changed || string(got) != want {
+		t.Fatalf("changed=%v err=%v\n%s", changed, err, got)
+	}
+}
+
+func TestHeredocEscapeDirectiveAndCRLF(t *testing.T) {
+	input := "# escape=`\r\nFROM alpine\r\nRUN true && `\r\n cat >/f <<EOF\r\nhello\r\nEOF\r\n"
+	if _, _, err := TransformLegacyHeredocs([]byte(input)); err == nil || !strings.Contains(err.Error(), "line 3:") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPreprocessFailurePreservesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Dockerfile")
+	input := []byte("FROM alpine\nRUN cat > /first <<EOF\nhello\nEOF\nRUN true && cat >/second <<EOF\nworld\nEOF\n")
+	if err := os.WriteFile(path, input, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := PreprocessDockerfile(path)
+	if err == nil || changed {
+		t.Fatalf("expected rejection: changed=%v err=%v", changed, err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil || string(got) != string(input) {
+		t.Fatalf("rejection changed the source file: %v", readErr)
+	}
+}
+
+func FuzzTransformLegacyHeredocs(f *testing.F) {
+	for _, command := range []string{"cat >/f <<'EOF'", "true && cat >/f <<EOF", "echo '<<'", "echo $((1<<N))", "cat <<", "if true; then cat <<EOF"} {
+		f.Add(command)
+	}
+	f.Fuzz(func(t *testing.T, command string) {
+		TransformLegacyHeredocs([]byte("FROM alpine\nRUN " + command + "\n"))
+	})
 }
