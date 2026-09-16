@@ -1712,3 +1712,27 @@ func multipartZipRequest(t *testing.T, fields map[string]string, files map[strin
 	}
 	return &body, mw.FormDataContentType()
 }
+
+func TestCreateBuildRejectsChainedHeredocBeforeScheduling(t *testing.T) {
+	runner := &fakeRunner{}
+	server := newTestServer(t, "", runner)
+	body, contentType := multipartZipRequest(t, map[string]string{"image": "example.com/ns/repo:tag"}, map[string]string{
+		"Dockerfile": "FROM alpine\nRUN mkdir -p /opt/demo && \\\n cat > /opt/demo/app.conf << 'EOF'\nlisten_port=5140\nEOF\n",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/builds", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	server.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Dockerfile line 2:") || !strings.Contains(rec.Body.String(), "standalone RUN cat") {
+		t.Fatalf("expected actionable 400 at submit time, got %d: %s", rec.Code, rec.Body.String())
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.requests) != 0 {
+		t.Fatal("invalid Dockerfile reached the build runner")
+	}
+	entries, err := os.ReadDir(server.cfg.WorkDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("rejected upload was not cleaned up: %v, %v", entries, err)
+	}
+}

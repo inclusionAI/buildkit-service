@@ -145,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
     def serve_registry(self):
         request = urllib.request.Request(os.environ['REGISTRY_URL'] + self.path,
                                          method=self.command,
-                                         headers={'Accept': self.headers.get('Accept', '*/*')})
+                                         headers={'Accept': ', '.join(self.headers.get_all('Accept', ['*/*']))})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
             with opener.open(request, timeout=30) as response:

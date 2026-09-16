@@ -5,11 +5,13 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/moby/buildkit/frontend/dockerfile/parser"
 )
 
 var (
-	runCatRedirectHeredocPattern = regexp.MustCompile(`^([ \t]*)RUN[ \t]+cat[ \t]+>[ \t]+([^ \t]+)[ \t]+<<(?:[ \t]*)(-?)(['\"]?)([A-Za-z_][A-Za-z0-9_]*)(['\"]?)[ \t]*$`)
-	runCatHeredocRedirectPattern = regexp.MustCompile(`^([ \t]*)RUN[ \t]+cat[ \t]+<<(?:[ \t]*)(-?)(['\"]?)([A-Za-z_][A-Za-z0-9_]*)(['\"]?)[ \t]+>[ \t]+([^ \t]+)[ \t]*$`)
+	runCatRedirectHeredocPattern = regexp.MustCompile(`^([ \t]*)RUN[ \t]+cat[ \t]+>[ \t]+([^ \t]+)[ \t]+<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)(['\"]?)[ \t]*$`)
+	runCatHeredocRedirectPattern = regexp.MustCompile(`^([ \t]*)RUN[ \t]+cat[ \t]+<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)(['\"]?)[ \t]+>[ \t]+([^ \t]+)[ \t]*$`)
 	runCatAppendHeredocPattern   = regexp.MustCompile(`^[ \t]*RUN[ \t]+cat[ \t]+>>[ \t]+[^ \t]+[ \t]+<<`)
 )
 
@@ -38,33 +40,71 @@ func TransformLegacyHeredocs(raw []byte) ([]byte, bool, error) {
 	lines := splitDockerfileLines(string(raw))
 	out := make([]string, 0, len(lines))
 	changed := false
+	escape := byte('\\')
+	directives := &parser.DirectiveParser{}
 
 	for idx := 0; idx < len(lines); idx++ {
-		line := lines[idx]
-		plain := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		start := idx
+		directive, err := directives.ParseLine([]byte(strings.TrimSpace(lines[idx])))
+		if err != nil {
+			return nil, false, fmt.Errorf("Dockerfile line %d: %w", start+1, err)
+		}
+		if directive != nil && directive.Name == "escape" && (directive.Value == "\\" || directive.Value == "`") {
+			escape = directive.Value[0]
+		}
+		plain, headerEnd := instructionHeader(lines, start, escape)
+		idx = headerEnd
+		instruction, command := splitInstruction(plain)
+		onbuild := instruction == "ONBUILD"
+		if onbuild {
+			instruction, command = splitInstruction(command)
+		}
+		if instruction != "RUN" && instruction != "COPY" && instruction != "ADD" {
+			out = append(out, lines[start:idx+1]...)
+			continue
+		}
+		// Only the keyword is normalized; untouched source is emitted verbatim.
+		indent := plain[:len(plain)-len(strings.TrimLeft(plain, " \t"))]
+		plain = indent + instruction + " " + strings.TrimSpace(command)
 
 		if runCatAppendHeredocPattern.MatchString(plain) {
-			return nil, false, fmt.Errorf("line %d: append heredoc with cat >> is not supported; use Dockerfile COPY heredoc or split the append into an explicit RUN", idx+1)
+			return nil, false, fmt.Errorf("line %d: append heredoc with cat >> is not supported; use Dockerfile COPY heredoc or split the append into an explicit RUN", start+1)
 		}
 
-		spec, ok, err := parseLegacyCatHeredoc(plain, idx+1)
+		spec, ok, err := parseLegacyCatHeredoc(plain, start+1)
 		if err != nil {
 			return nil, false, err
 		}
-		if !ok {
-			out = append(out, line)
-			continue
+		if ok && (onbuild || strings.ContainsAny(spec.target, "$`\\\"'~*?[]{};&|<>()")) {
+			ok = false // COPY cannot preserve shell expansion or command syntax in the target.
+		}
+		var docs []parser.Heredoc
+		if instruction == "RUN" {
+			docs, err = instructionHeredocs(command)
+		} else {
+			docs, err = dockerfileHeredocs(command)
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("Dockerfile line %d: %w", start+1, err)
+		}
+		if instruction == "RUN" && len(docs) > 0 && !ok && !nativeRunHeredoc(command) {
+			return nil, false, fmt.Errorf("Dockerfile line %d: unsupported RUN heredoc %q; shell command chains, append redirects and other complex forms cannot be safely rewritten; split file creation into a standalone RUN cat > /path <<'EOF', or use native COPY <<'EOF' /path with separate RUN instructions", start+1, docs[0].Name)
+		}
+		for _, doc := range docs {
+			end := findHeredocEnd(lines, idx+1, doc.Name, doc.Chomp)
+			if end < 0 {
+				return nil, false, fmt.Errorf("Dockerfile line %d: heredoc delimiter %q was not found", start+1, doc.Name)
+			}
+			idx = end
 		}
 
-		end := findHeredocEnd(lines, idx+1, spec.delimiter, spec.stripTabs)
-		if end < 0 {
-			return nil, false, fmt.Errorf("line %d: heredoc delimiter %q was not found", idx+1, spec.delimiter)
+		if ok {
+			out = append(out, fmt.Sprintf("%sCOPY <<%s %s\n", spec.indent, spec.delimiterToken, spec.target))
+			out = append(out, lines[headerEnd+1:idx+1]...)
+			changed = true
+		} else {
+			out = append(out, lines[start:idx+1]...)
 		}
-
-		out = append(out, fmt.Sprintf("%sCOPY <<%s %s\n", spec.indent, spec.delimiterToken, spec.target))
-		out = append(out, lines[idx+1:end+1]...)
-		idx = end
-		changed = true
 	}
 
 	if !changed {
@@ -76,9 +116,7 @@ func TransformLegacyHeredocs(raw []byte) ([]byte, bool, error) {
 type legacyHeredocSpec struct {
 	indent         string
 	target         string
-	delimiter      string
 	delimiterToken string
-	stripTabs      bool
 }
 
 func parseLegacyCatHeredoc(line string, lineNumber int) (legacyHeredocSpec, bool, error) {
@@ -88,7 +126,7 @@ func parseLegacyCatHeredoc(line string, lineNumber int) (legacyHeredocSpec, bool
 			return legacyHeredocSpec{}, false, fmt.Errorf("line %d: mismatched heredoc delimiter quotes", lineNumber)
 		}
 		delimiterToken := match[3] + quoteLeft + match[5] + quoteRight
-		return legacyHeredocSpec{indent: match[1], target: match[2], delimiter: match[5], delimiterToken: delimiterToken, stripTabs: match[3] == "-"}, true, nil
+		return legacyHeredocSpec{indent: match[1], target: match[2], delimiterToken: delimiterToken}, true, nil
 	}
 	if match := runCatHeredocRedirectPattern.FindStringSubmatch(line); match != nil {
 		quoteLeft, quoteRight := match[3], match[5]
@@ -96,7 +134,7 @@ func parseLegacyCatHeredoc(line string, lineNumber int) (legacyHeredocSpec, bool
 			return legacyHeredocSpec{}, false, fmt.Errorf("line %d: mismatched heredoc delimiter quotes", lineNumber)
 		}
 		delimiterToken := match[2] + quoteLeft + match[4] + quoteRight
-		return legacyHeredocSpec{indent: match[1], target: match[6], delimiter: match[4], delimiterToken: delimiterToken, stripTabs: match[2] == "-"}, true, nil
+		return legacyHeredocSpec{indent: match[1], target: match[6], delimiterToken: delimiterToken}, true, nil
 	}
 	return legacyHeredocSpec{}, false, nil
 }

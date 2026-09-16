@@ -385,5 +385,58 @@ class CacheAssertionTests(unittest.TestCase):
                 verify.check_wheel_cache()
 
 
+class ImageIdentityTests(unittest.TestCase):
+    def test_resolves_exact_index_and_manifest_without_tag_lookup(self):
+        from unittest.mock import Mock
+        from scenarios import Scenarios
+        runtime = Mock()
+        runtime.state = {'name': 'owned', 'architecture': 'amd64'}
+        runtime.command.return_value = 'owned-worker\n'
+        runtime.docker.side_effect = [json.dumps({'manifests': [
+            {'platform': {'os': 'linux', 'architecture': 'amd64'}, 'digest': 'sha256:manifest'},
+            {'platform': {'os': 'unknown', 'architecture': 'unknown'}, 'digest': 'sha256:attestation'}]}),
+            json.dumps({'config': {'digest': 'sha256:config'}})]
+        self.assertEqual(Scenarios(runtime).image_config_digest('owned-worker', 'sha256:index'), 'sha256:config')
+        self.assertEqual([call.args[-1] for call in runtime.docker.call_args_list], ['sha256:index', 'sha256:manifest'])
+        with self.assertRaisesRegex(RuntimeError, 'not owned'):
+            Scenarios(runtime).image_config_digest('other-node', 'sha256:index')
+
+    def test_rejects_wrong_deployed_config_even_when_tag_matches(self):
+        from unittest.mock import Mock
+        from scenarios import Scenarios
+        runtime = Mock()
+        runtime.state = {'name': 'owned', 'architecture': 'amd64',
+                         'images': {'service': {'tag': 'service:test', 'id': 'sha256:manifest'}}}
+        runtime.command.return_value = 'owned-worker\n'
+        runtime.kubectl.return_value = json.dumps({'items': [{
+            'spec': {'nodeName': 'owned-worker'},
+            'status': {'containerStatuses': [{'image': 'service:test', 'imageID': 'sha256:wrong'}]}}]})
+        runtime.docker.return_value = json.dumps({'config': {'digest': 'sha256:expected'}})
+        with self.assertRaisesRegex(RuntimeError, 'Unexpected deployed image ID'):
+            Scenarios(runtime).verify_image_ids()
+
+
+
+class RegistryFixtureTests(unittest.TestCase):
+    def test_proxy_preserves_all_accepted_manifest_types(self):
+        from email.message import Message
+        from unittest.mock import Mock
+        import fixture
+
+        handler = object.__new__(fixture.Handler)
+        handler.headers = Message()
+        handler.headers.add_header('Accept', 'application/vnd.docker.distribution.manifest.v2+json')
+        handler.headers.add_header('Accept', 'application/vnd.oci.image.manifest.v1+json')
+        handler.path = '/v2/base/manifests/seed'
+        handler.command = 'GET'
+        handler.respond = Mock()
+        with patch.dict(fixture.os.environ, {'REGISTRY_URL': 'http://registry'}), \
+             patch.object(fixture.urllib.request, 'build_opener') as opener:
+            fixture.Handler.serve_registry(handler)
+        request = opener.return_value.open.call_args.args[0]
+        self.assertEqual(request.get_header('Accept'),
+                         'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json')
+
+
 if __name__ == '__main__':
     unittest.main()

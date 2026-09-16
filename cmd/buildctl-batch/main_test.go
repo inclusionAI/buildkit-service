@@ -397,3 +397,27 @@ func TestBuildCommandArgsUsesSpecCompression(t *testing.T) {
 		t.Fatalf("did not expect nydus compression in oci args: %q", ociArgs)
 	}
 }
+
+func TestPrepareBuildImageDirsRejectsChainedHeredoc(t *testing.T) {
+	root := t.TempDir()
+	imageDir := filepath.Join(root, "image-a")
+	if err := os.Mkdir(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("FROM alpine\nRUN true && cat >/f << 'EOF'\nlisten_port=5140\nEOF\n")
+	path := filepath.Join(imageDir, "Dockerfile")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "metadata.json"), []byte(`{"target":"example.com/ns/repo:tag"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prepared, _, err := prepareBuildImageDirs(root, nil)
+	if err == nil || !strings.Contains(err.Error(), "line 2:") || !strings.Contains(err.Error(), "COPY") || prepared != "" {
+		t.Fatalf("expected preparation to fail before build: prepared=%q err=%v", prepared, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("source context modified on rejection: %v", err)
+	}
+}

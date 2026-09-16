@@ -469,69 +469,37 @@ wc -c /tmp/node-latest-nydus-v3-manifest.json
 
 #### Dockerfile heredoc compatibility
 
-buildctl-daemon and buildctl-batch preprocess Dockerfiles server-side to
-support a common legacy shell heredoc pattern:
+buildctl-daemon and buildctl-batch preprocess Dockerfiles before scheduling builds. For compatibility with frontends that do not recognize legacy shell heredocs, a standalone file overwrite is converted to a native Dockerfile `COPY` heredoc:
 
 ```dockerfile
 RUN cat > /path/file << 'EOF'
-...
+file contents
 EOF
-```
-
-This pattern normally fails at Dockerfile parse time (not shell execution
-time) with errors like
-`dockerfile parse error on line N: unknown instruction: Download`. The server
-now rewrites it into a native Dockerfile heredoc before submitting to
-BuildKit:
-
-```dockerfile
+# Becomes:
 COPY <<'EOF' /path/file
-...
+file contents
 EOF
 ```
 
-Currently auto-converted simple overwrite patterns:
+Supported overwrite forms are `RUN cat > /path/file <<EOF` and `RUN cat <<EOF > /path/file`, including quoted delimiters, `<<-` tab stripping, instruction case variations and Dockerfile line continuations. Targets must be literal paths: shell variables, substitutions and globs cannot retain their meaning in `COPY`. Delimiter quoting and body contents are preserved. The scheduling key remains the hash of the original source context, calculated before rewriting.
 
-- `RUN cat > /path/file <<EOF`
-- `RUN cat > /path/file << 'EOF'`
-- `RUN cat <<EOF > /path/file`
-- `RUN cat << 'EOF' > /path/file`
-- `RUN cat > /path/file <<-EOF`
+Heredocs combined with command chains (`&&`, `;`), pipes, append redirects (`>>`), multiple redirects, or commands such as `tee` are rejected with the original `RUN` line number and an actionable error. The HTTP API returns **400 before scheduling**; batch preparation fails before submitting a build. No partially rewritten Dockerfile is written on failure.
 
-Quoting of the delimiter is preserved, as is `<<-` tab-stripping semantics.
-The worker scheduling key is the full content hash of the original source
-context (Dockerfile, metadata.json, and all other context files), computed
-before the server-side rewrite; identical Dockerfiles with different context
-content schedule under different keys.
-
-New Dockerfiles should still prefer native BuildKit heredocs:
+For example, split a chained file creation into separate instructions:
 
 ```dockerfile
-FROM ubuntu:22.04
-
-COPY <<'SCRIPTEOF' /workspace/run.sh
-#!/bin/bash
-TARGET_URL="https://artifacts.example.com/data.bin"
-echo "Downloading ${TARGET_URL}..."
-SCRIPTEOF
-RUN chmod +x /workspace/run.sh
+# Unsupported: RUN mkdir -p /opt/demo && cat > /opt/demo/app.conf <<'EOF'
+RUN mkdir -p /opt/demo
+COPY <<'EOF' /opt/demo/app.conf
+listen_port=5140
+max_message_size=1024
+EOF
+RUN chmod 644 /opt/demo/app.conf
 ```
 
-Quoting the delimiter prevents the Dockerfile frontend from expanding `${...}`
-in the content, preserving shell variables literally. Unquoted
-`COPY <<EOF /path` also works when the content has no `${...}`; for shell,
-Python, templates, or config snippets, `COPY <<'EOF' /path` is safer.
+New Dockerfiles should prefer native `COPY <<'EOF' /path`. Quoting the delimiter prevents frontend expansion of `${...}` and preserves shell variables in scripts literally. Use separate `RUN chmod` / `RUN chown` instructions where required; splitting shell chains automatically could change their conditional execution, variables, redirections or permissions.
 
-Not auto-rewritten (fix manually with native `COPY <<'EOF'` plus separate
-`RUN chmod`/`RUN chown` as needed):
-
-- `RUN cat >> /path/file <<EOF`: append semantics differ from `COPY`
-  overwrite; returns an explicit error.
-- Multiple heredocs, pipes, parentheses, or `&&`-chained commands in one
-  `RUN`.
-- Heredocs wrapped in strings, e.g. `RUN sh -c 'cat <<EOF ...'`.
-- `tee`, `install -m`, variable target paths, and other patterns whose
-  semantics are hard to infer safely.
+Native `COPY`/`ADD` heredocs and explicit `RUN <<EOF` scripts are passed through, with their bodies treated as data rather than additional Dockerfile instructions. Native `RUN` heredoc support still depends on the selected frontend. Quoted strings, JSON exec arguments (including instructions with flags), here-strings (`<<<`) and arithmetic shifts are not treated as legacy heredocs. Quoted shell programs such as `RUN sh -c '...'` are not recursively rewritten; express multiline file contents with native Dockerfile heredocs instead.
 
 ## Part 2: Deployment and implementation details
 
