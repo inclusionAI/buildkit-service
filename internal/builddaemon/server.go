@@ -1,4 +1,4 @@
-package main
+package builddaemon
 
 import (
 	"errors"
@@ -14,7 +14,7 @@ import (
 )
 
 type buildServer struct {
-	cfg       config
+	cfg       Config
 	store     *taskStore
 	pool      *addrPool
 	runner    buildRunner

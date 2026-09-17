@@ -1,4 +1,4 @@
-package main
+package builddaemon
 
 import (
 	"context"
@@ -217,12 +217,12 @@ func stripNydusV3Suffix(target string) string {
 }
 
 type realBuildRunner struct {
-	tls     tlsConfig
+	tls     TLSConfig
 	clients map[string]*buildkit.Client
 	mu      sync.Mutex
 }
 
-func newRealBuildRunner(tls tlsConfig) (*realBuildRunner, error) {
+func newRealBuildRunner(tls TLSConfig) (*realBuildRunner, error) {
 	resolved, err := resolveTLSConfig(tls)
 	if err != nil {
 		return nil, err
@@ -325,14 +325,14 @@ func (r *realBuildRunner) Close() error {
 	return nil
 }
 
-func resolveTLSConfig(tls tlsConfig) (tlsConfig, error) {
+func resolveTLSConfig(tls TLSConfig) (TLSConfig, error) {
 	if tls.Dir == "" {
 		return tls, nil
 	}
 	if tls.CACert != "" || tls.Cert != "" || tls.Key != "" {
-		return tlsConfig{}, errors.New("cannot specify tlsdir and tlscacert/tlscert/tlskey at the same time")
+		return TLSConfig{}, errors.New("cannot specify tlsdir and tlscacert/tlscert/tlskey at the same time")
 	}
-	return tlsConfig{
+	return TLSConfig{
 		CACert:     filepath.Join(tls.Dir, "ca.pem"),
 		Cert:       filepath.Join(tls.Dir, "cert.pem"),
 		Key:        filepath.Join(tls.Dir, "key.pem"),

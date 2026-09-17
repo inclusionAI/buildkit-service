@@ -1,4 +1,4 @@
-package main
+package builddaemon
 
 import (
 	"archive/zip"

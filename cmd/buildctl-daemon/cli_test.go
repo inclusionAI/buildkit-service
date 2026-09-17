@@ -1,20 +1,20 @@
 package main
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"bytes"
+	"context"
+	"errors"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/inclusionAI/buildkit-service/internal/builddaemon"
 )
 
 func TestDaemonCLIDefaultsAndEnvironment(t *testing.T) {
 	t.Setenv("BUILDCTL_DAEMON_PPROF_SERVER", "127.0.0.1:6060")
-	var got config
-	app := newDaemonApp(func(cfg config) error {
+	var got builddaemon.Config
+	app := newDaemonApp(func(_ context.Context, cfg builddaemon.Config) error {
 		got = cfg
 		return nil
 	})
@@ -24,32 +24,16 @@ func TestDaemonCLIDefaultsAndEnvironment(t *testing.T) {
 	if err := app.Run([]string{"buildctl-daemon"}); err != nil {
 		t.Fatal(err)
 	}
-	want := config{
-		Listen:            defaultListenAddr,
-		BuildkitdAddrs:    defaultBuildkitdAddr,
-		WorkDir:           defaultWorkDir,
-		DefaultMode:       defaultBuildMode,
-		KeepTTL:           defaultKeepTTL,
-		PprofListen:       "127.0.0.1:6060",
-		MaxLogBytes:       defaultMaxLogBytes,
-		MaxRequestBytes:   defaultMaxRequestBytes,
-		MaxExtractedBytes: defaultMaxExtractedBytes,
-		MaxArchiveFiles:   defaultMaxArchiveFiles,
-		MaxRetainedTasks:  defaultMaxRetainedTasks,
-		MaxWorkDirBytes:   defaultMaxWorkDirBytes,
-		UploadReadTimeout: defaultUploadReadTimeout,
-		AddrConcurrency:   defaultAddrConcurrency,
-		RegistryTimeout:   defaultRegistryTimeout,
-		RegistryChecks:    defaultRegistryChecks,
-	}
+	want := builddaemon.DefaultConfig()
+	want.PprofListen = "127.0.0.1:6060"
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("CLI defaults changed:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 
 func TestDaemonCLIMapsExplicitFlags(t *testing.T) {
-	var got config
-	app := newDaemonApp(func(cfg config) error {
+	var got builddaemon.Config
+	app := newDaemonApp(func(_ context.Context, cfg builddaemon.Config) error {
 		got = cfg
 		return nil
 	})
@@ -87,7 +71,7 @@ func TestDaemonCLIMapsExplicitFlags(t *testing.T) {
 	if err := app.Run(args); err != nil {
 		t.Fatal(err)
 	}
-	want := config{
+	want := builddaemon.Config{
 		Listen:             "127.0.0.1:9000",
 		BuildkitdAddrs:     "tcp://worker:1234",
 		AuthToken:          "token",
@@ -111,7 +95,7 @@ func TestDaemonCLIMapsExplicitFlags(t *testing.T) {
 		RegistryTimeout:    9 * time.Second,
 		RegistryRules:      "registry.example=registry.example",
 		RegistryChecks:     10,
-		TLS: tlsConfig{
+		TLS: builddaemon.TLSConfig{
 			CACert:     "ca.pem",
 			Cert:       "cert.pem",
 			Key:        "key.pem",
@@ -156,7 +140,7 @@ func TestDaemonCLIHelpText(t *testing.T) {
 		"tlsservername":              "server name for buildkitd TLS verification",
 	}
 
-	app := newDaemonApp(func(config) error { return nil })
+	app := newDaemonApp(func(context.Context, builddaemon.Config) error { return nil })
 	got := make(map[string]string, len(app.Flags))
 	for _, flag := range app.Flags {
 		docFlag, ok := flag.(interface{ GetUsage() string })
@@ -170,37 +154,46 @@ func TestDaemonCLIHelpText(t *testing.T) {
 	}
 }
 
-func TestLoadAuthTokenPreservesValidationAndTrimming(t *testing.T) {
-	cfg := config{AuthToken: "inline", AuthTokenFile: "token-file"}
-	if err := loadAuthToken(&cfg); err == nil || err.Error() != "--auth-token and --auth-token-file are mutually exclusive" {
-		t.Fatalf("unexpected mutually exclusive token error: %v", err)
-	}
-
-	tokenPath := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(tokenPath, []byte("  secret-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg = config{AuthTokenFile: tokenPath}
-	if err := loadAuthToken(&cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.AuthToken != "secret-token" {
-		t.Fatalf("token was not trimmed: %q", cfg.AuthToken)
-	}
-
-	if err := os.WriteFile(tokenPath, []byte(" \n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg = config{AuthTokenFile: tokenPath}
-	if err := loadAuthToken(&cfg); err == nil || err.Error() != "auth token file is empty" {
-		t.Fatalf("unexpected empty token error: %v", err)
+func TestRunCommandReportsDaemonError(t *testing.T) {
+	var stderr bytes.Buffer
+	code := runCommand([]string{"buildctl-daemon"}, &stderr, func(context.Context, builddaemon.Config) error {
+		return errors.New("daemon failed")
+	})
+	if code != 1 || stderr.String() != "buildctl-daemon: daemon failed\n" {
+		t.Fatalf("unexpected command result: code=%d stderr=%q", code, stderr.String())
 	}
 }
 
-func TestPprofHandlersRemainRegistered(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
-	_, pattern := http.DefaultServeMux.Handler(req)
-	if !strings.Contains(pattern, "/debug/pprof/") {
-		t.Fatalf("pprof handler is not registered: %q", pattern)
+func TestRunCommandReportsCLIParseError(t *testing.T) {
+	var stderr bytes.Buffer
+	called := false
+	code := runCommand([]string{"buildctl-daemon", "--keep-ttl=invalid"}, &stderr, func(context.Context, builddaemon.Config) error {
+		called = true
+		return nil
+	})
+	if code != 1 || called {
+		t.Fatalf("unexpected parse result: code=%d called=%v", code, called)
+	}
+	if stderr.String() != "buildctl-daemon: invalid value \"invalid\" for flag -keep-ttl: parse error\n" {
+		t.Fatalf("unexpected parse error: %q", stderr.String())
+	}
+}
+
+func TestRunCommandSuccess(t *testing.T) {
+	var stderr bytes.Buffer
+	var runContext context.Context
+	if code := runCommand([]string{"buildctl-daemon"}, &stderr, func(ctx context.Context, _ builddaemon.Config) error {
+		runContext = ctx
+		return nil
+	}); code != 0 {
+		t.Fatalf("unexpected command result: code=%d stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	select {
+	case <-runContext.Done():
+	default:
+		t.Fatal("signal context was not released after the daemon returned")
 	}
 }

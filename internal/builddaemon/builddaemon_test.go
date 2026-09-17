@@ -1,4 +1,4 @@
-package main
+package builddaemon
 
 import (
 	"archive/zip"
@@ -1501,7 +1501,7 @@ func newTestServer(t *testing.T, token string, runner buildRunner) *buildServer 
 		t.Fatal(err)
 	}
 	return &buildServer{
-		cfg:    config{WorkDir: t.TempDir(), AuthToken: token, KeepTTL: defaultKeepTTL, MaxLogBytes: defaultMaxLogBytes},
+		cfg:    Config{WorkDir: t.TempDir(), AuthToken: token, KeepTTL: defaultKeepTTL, MaxLogBytes: defaultMaxLogBytes},
 		store:  newTaskStore(),
 		pool:   newAddrPool(addrs, 4),
 		runner: runner,
