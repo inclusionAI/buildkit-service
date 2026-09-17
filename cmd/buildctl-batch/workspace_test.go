@@ -103,3 +103,29 @@ func TestBuildVariableParsingAndReplacement(t *testing.T) {
 		t.Fatalf("unexpected invalid variable error: %v", err)
 	}
 }
+
+func TestLoadBuildSpecsCleanupRemovesOwnedWorkspaceOnly(t *testing.T) {
+	sourceRoot := t.TempDir()
+	writeBuildImageDir(t, sourceRoot, "image-a", "example.com/team/image:a")
+
+	specs, cleanup, err := loadBuildSpecs(sourceRoot, "", []bool{true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup == nil || len(specs) != 1 {
+		t.Fatalf("loadBuildSpecs returned %d specs and cleanup=%v", len(specs), cleanup != nil)
+	}
+	preparedRoot := filepath.Dir(specs[0].dir)
+	if _, err := os.Stat(preparedRoot); err != nil {
+		t.Fatalf("prepared workspace missing before cleanup: %v", err)
+	}
+
+	cleanup()
+	cleanup()
+	if _, err := os.Stat(preparedRoot); !os.IsNotExist(err) {
+		t.Fatalf("prepared workspace still exists after cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sourceRoot, "image-a", "Dockerfile")); err != nil {
+		t.Fatalf("cleanup changed source workspace: %v", err)
+	}
+}

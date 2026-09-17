@@ -136,30 +136,11 @@ func runBuildCommand(opts options) error {
 			return false
 		}
 
-		var slot *addrSlot
-		for {
-			if ctx.Err() != nil {
-				return false
-			}
-
-			snapshot := addrPool.snapshot()
-			slot = pickAvailableAddrSlot(snapshot, task.job.scheduleKey)
-			if slot == nil {
-				select {
-				case <-time.After(200 * time.Millisecond):
-				case <-ctx.Done():
-					return false
-				}
-				continue
-			}
-
-			break
+		slot := waitForAvailableAddrSlot(ctx, addrPool, task.job.scheduleKey)
+		if slot == nil {
+			return false
 		}
-
-		select {
-		case globalSem <- struct{}{}:
-		case <-ctx.Done():
-			<-slot.sem
+		if !acquireGlobalSlotOrReleaseWorker(ctx, globalSem, slot) {
 			return false
 		}
 
@@ -371,7 +352,7 @@ func runBuildCommandStreamingImageDirs(opts options, buildModes []bool) error {
 
 	go func() {
 		defer close(jobCh)
-		prepareErrCh <- streamPreparedBuildJobs(ctx, opts, buildModes, targetFilters, entries, preparedRoot, store, outcomeCounters, jobCh)
+		prepareErrCh <- streamPreparedBuildJobs(ctx, opts, buildModes, targetFilters, entries, preparedRoot, store.db, outcomeCounters, jobCh)
 	}()
 
 	scheduleTask := func(task buildTask) bool {
@@ -382,30 +363,11 @@ func runBuildCommandStreamingImageDirs(opts options, buildModes []bool) error {
 			return false
 		}
 
-		var slot *addrSlot
-		for {
-			if ctx.Err() != nil {
-				return false
-			}
-
-			snapshot := addrPool.snapshot()
-			slot = pickAvailableAddrSlot(snapshot, task.job.scheduleKey)
-			if slot == nil {
-				select {
-				case <-time.After(200 * time.Millisecond):
-				case <-ctx.Done():
-					return false
-				}
-				continue
-			}
-
-			break
+		slot := waitForAvailableAddrSlot(ctx, addrPool, task.job.scheduleKey)
+		if slot == nil {
+			return false
 		}
-
-		select {
-		case globalSem <- struct{}{}:
-		case <-ctx.Done():
-			<-slot.sem
+		if !acquireGlobalSlotOrReleaseWorker(ctx, globalSem, slot) {
 			return false
 		}
 
@@ -532,7 +494,7 @@ done:
 	return nil
 }
 
-func streamPreparedBuildJobs(ctx context.Context, opts options, buildModes []bool, targetFilters map[string]struct{}, entries []os.DirEntry, preparedRoot string, store *resultStore, outcomeCounters *buildOutcomeCounters, out chan<- buildJob) error {
+func streamPreparedBuildJobs(ctx context.Context, opts options, buildModes []bool, targetFilters map[string]struct{}, entries []os.DirEntry, preparedRoot string, results buildResultReader, outcomeCounters *buildOutcomeCounters, out chan<- buildJob) error {
 	for idx, entry := range entries {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -600,7 +562,7 @@ func streamPreparedBuildJobs(ctx context.Context, opts options, buildModes []boo
 			continue
 		}
 
-		jobs, existingOutcomes, skippedSucceeded, skippedFailed, err := filterBuildJobs(groupBuildSpecs(specs), store.db, opts.skipFail)
+		jobs, existingOutcomes, skippedSucceeded, skippedFailed, err := filterBuildJobs(groupBuildSpecs(specs), results, opts.skipFail)
 		if err != nil {
 			return err
 		}
