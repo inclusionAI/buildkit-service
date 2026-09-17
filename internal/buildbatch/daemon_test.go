@@ -1,13 +1,16 @@
-package main
+package buildbatch
 
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestBuildOptionsFromQueryAcceptsOneshot(t *testing.T) {
@@ -38,6 +41,44 @@ func TestTriggerShutdownIsIdempotent(t *testing.T) {
 	case <-srv.shutdownCh:
 	default:
 		t.Fatal("expected shutdown channel to be closed after triggerShutdown")
+	}
+}
+
+func TestRunDaemonStopsWhenContextIsCancelled(t *testing.T) {
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("buildctl-batch-%d.sock", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.Remove(socketPath) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runDaemon(ctx, socketPath, "")
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stat daemon socket: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for daemon socket")
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("daemon stopped before creating its socket: %v", err)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run daemon: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not stop after context cancellation")
 	}
 }
 

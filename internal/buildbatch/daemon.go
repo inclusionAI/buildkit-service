@@ -1,4 +1,4 @@
-package main
+package buildbatch
 
 import (
 	"archive/zip"
@@ -11,18 +11,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	cli "github.com/urfave/cli/v2"
 )
 
 const (
@@ -65,26 +62,6 @@ func (s *daemonServer) triggerShutdown() {
 	})
 }
 
-func daemonCLICommand() *cli.Command {
-	return &cli.Command{
-		Name:  "daemon",
-		Usage: "start HTTP server on a unix domain socket for build/export/preheat",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "socket", Value: defaultDaemonSocket, Usage: "unix socket path"},
-			&cli.StringFlag{Name: "addrs", Usage: "default comma-separated buildkitd addresses"},
-			&cli.StringFlag{Name: "auth", Usage: "base64-encoded registry auth JSON; written to /root/.docker/config.json"},
-		},
-		Action: func(c *cli.Context) error {
-			if auth := c.String("auth"); auth != "" {
-				if err := writeDockerAuth(auth); err != nil {
-					return err
-				}
-			}
-			return runDaemon(c.String("socket"), c.String("addrs"))
-		},
-	}
-}
-
 func writeDockerAuth(b64 string) error {
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
@@ -102,7 +79,20 @@ func writeDockerAuth(b64 string) error {
 	return nil
 }
 
-func runDaemon(socketPath, defaultAddrs string) error {
+// RunDaemon starts the batch HTTP daemon.
+func RunDaemon(ctx context.Context, cfg DaemonConfig) error {
+	if cfg.Auth != "" {
+		if err := writeDockerAuth(cfg.Auth); err != nil {
+			return err
+		}
+	}
+	return runDaemon(ctx, cfg.Socket, cfg.Addrs)
+}
+
+func runDaemon(ctx context.Context, socketPath, defaultAddrs string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	srv := &daemonServer{
 		defaultAddrs: defaultAddrs,
 		resultDB:     daemonResultDB,
@@ -131,12 +121,9 @@ func runDaemon(socketPath, defaultAddrs string) error {
 
 	httpSrv := &http.Server{Handler: e}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		select {
-		case sig := <-sigCh:
-			logInfo("Received %s, shutting down daemon", sig)
+		case <-ctx.Done():
 		case <-srv.shutdownCh:
 			logInfo("Shutdown requested, shutting down daemon")
 		}

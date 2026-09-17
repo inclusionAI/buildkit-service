@@ -1,6 +1,6 @@
 //go:build !linux || !cgo
 
-package main
+package buildbatch
 
 import "errors"
 
