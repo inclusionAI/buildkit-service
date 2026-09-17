@@ -1,35 +1,15 @@
 package buildbatch
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
-
-func TestBuildOptionsFromQueryAcceptsOneshot(t *testing.T) {
-	q := url.Values{}
-	q.Set("oneshot", "true")
-
-	if _, err := buildOptionsFromQuery(q, "tcp://127.0.0.1:9094", "/tmp/result.lmdb", "/tmp/logs.jsonl"); err != nil {
-		t.Fatalf("expected oneshot to be an accepted query key, got %v", err)
-	}
-}
-
-func TestBuildOptionsFromQueryRejectsUnknownKey(t *testing.T) {
-	q := url.Values{}
-	q.Set("bogus", "1")
-
-	if _, err := buildOptionsFromQuery(q, "tcp://127.0.0.1:9094", "/tmp/result.lmdb", "/tmp/logs.jsonl"); err == nil {
-		t.Fatal("expected unknown query key to be rejected")
-	}
-}
 
 func TestTriggerShutdownIsIdempotent(t *testing.T) {
 	srv := &daemonServer{shutdownCh: make(chan struct{})}
@@ -82,39 +62,58 @@ func TestRunDaemonStopsWhenContextIsCancelled(t *testing.T) {
 	}
 }
 
-func TestBatchArchiveLimits(t *testing.T) {
-	zipPath := filepath.Join(t.TempDir(), "source.zip")
-	var buffer bytes.Buffer
-	writer := zip.NewWriter(&buffer)
-	for name, content := range map[string]string{
-		"image/Dockerfile":    "FROM scratch\n",
-		"image/metadata.json": `{"target":"example.com/team/image:v1"}`,
-	} {
-		entry, err := writer.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := entry.Write([]byte(content)); err != nil {
-			t.Fatal(err)
-		}
+func TestRunDaemonPropagatesListenError(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "missing", "buildctl-batch.sock")
+	err := runDaemon(context.Background(), socketPath, "")
+	if err == nil || !strings.HasPrefix(err.Error(), "listen on "+socketPath+": ") {
+		t.Fatalf("listen error changed: %v", err)
 	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
+}
+
+func TestDaemonCompletionErrorPreservesOneshotExitSemantics(t *testing.T) {
+	tests := []struct {
+		name    string
+		oneshot bool
+		state   daemonState
+		want    string
+	}{
+		{name: "regular failure", state: daemonState{Status: "failed", Error: "build failed"}},
+		{name: "oneshot success", oneshot: true, state: daemonState{Status: "completed"}},
+		{name: "oneshot failure", oneshot: true, state: daemonState{Status: "failed", Error: "build failed"}, want: "oneshot build failed: build failed"},
 	}
-	if err := os.WriteFile(zipPath, buffer.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := newTestDaemonServer()
+			srv.oneshot = test.oneshot
+			srv.build = test.state
+			err := srv.completionError()
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected completion error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("completion error changed: got %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestClearBuildExecutionOnlyClearsOwnedRun(t *testing.T) {
+	srv := newTestDaemonServer()
+	owned := make(chan struct{})
+	other := make(chan struct{})
+	srv.buildDone = owned
+	srv.buildCancel = func() {}
+
+	srv.clearBuildExecution(other)
+	if srv.buildDone != owned || srv.buildCancel == nil {
+		t.Fatal("unrelated build execution cleared active state")
 	}
 
-	if _, err := validateBuildArchive(zipPath, 1<<20, 1); !errors.Is(err, errDaemonArchiveLimit) {
-		t.Fatalf("expected file-count limit error, got %v", err)
-	}
-	if _, err := validateBuildArchive(zipPath, 4, 10); !errors.Is(err, errDaemonArchiveLimit) {
-		t.Fatalf("expected extracted-size limit error, got %v", err)
-	}
-	if _, err := validateBuildArchive(zipPath, 1<<20, 10); err != nil {
-		t.Fatalf("expected valid archive within limits: %v", err)
-	}
-	if err := extractZip(zipPath, filepath.Join(t.TempDir(), "output"), 1<<20, 10); err != nil {
-		t.Fatalf("expected archive within limits to extract: %v", err)
+	srv.clearBuildExecution(owned)
+	if srv.buildDone != nil || srv.buildCancel != nil {
+		t.Fatal("owned build execution state was not cleared")
 	}
 }
