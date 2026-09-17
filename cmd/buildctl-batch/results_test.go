@@ -78,3 +78,37 @@ func TestPersistBuildResultReturnsErrorOnStoreFailure(t *testing.T) {
 		t.Fatalf("counters changed unexpectedly: success=%d total=%d failed=%d", succeeded, total, failed)
 	}
 }
+
+func TestBuildOutcomeCountersReplaceExistingTargetState(t *testing.T) {
+	counters := newBuildOutcomeCounters(2, map[string]buildOutcomeState{
+		"target-a": buildOutcomeFailed,
+	})
+
+	if succeeded, total, failed := counters.apply("target-a", true); succeeded != 1 || total != 2 || failed != 0 {
+		t.Fatalf("failed-to-success update = %d/%d failed=%d", succeeded, total, failed)
+	}
+	if succeeded, total, failed := counters.apply("target-a", true); succeeded != 1 || total != 2 || failed != 0 {
+		t.Fatalf("duplicate success was counted twice: %d/%d failed=%d", succeeded, total, failed)
+	}
+	if succeeded, total, failed := counters.apply("target-b", false); succeeded != 1 || total != 2 || failed != 1 {
+		t.Fatalf("new failure = %d/%d failed=%d", succeeded, total, failed)
+	}
+	if succeeded, total, failed := counters.applyExisting("target-b", buildOutcomeSucceeded); succeeded != 2 || total != 2 || failed != 0 {
+		t.Fatalf("restored state replacement = %d/%d failed=%d", succeeded, total, failed)
+	}
+}
+
+func TestBuildOutcomeCountersDecrementTotalForFilteredTarget(t *testing.T) {
+	counters := newBuildOutcomeCounters(2, map[string]buildOutcomeState{
+		"target-a": buildOutcomeSucceeded,
+	})
+	if succeeded, total, failed := counters.decrementTotal(); succeeded != 1 || total != 1 || failed != 0 {
+		t.Fatalf("decrement = %d/%d failed=%d", succeeded, total, failed)
+	}
+	if succeeded, total, failed := counters.decrementTotal(); succeeded != 1 || total != 0 || failed != 0 {
+		t.Fatalf("second decrement = %d/%d failed=%d", succeeded, total, failed)
+	}
+	if succeeded, total, failed := counters.decrementTotal(); succeeded != 1 || total != 0 || failed != 0 {
+		t.Fatalf("total became negative: %d/%d failed=%d", succeeded, total, failed)
+	}
+}

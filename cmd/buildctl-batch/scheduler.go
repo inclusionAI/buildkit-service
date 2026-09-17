@@ -239,42 +239,74 @@ func tryAcquireAddrSlot(sem chan struct{}) bool {
 	}
 }
 
+func waitForAvailableAddrSlot(ctx context.Context, pool *addrPool, key string) *addrSlot {
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		snapshot := pool.snapshot()
+		slot := pickAvailableAddrSlot(snapshot, key)
+		if slot != nil {
+			return slot
+		}
+
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func acquireGlobalSlotOrReleaseWorker(ctx context.Context, globalSem chan struct{}, slot *addrSlot) bool {
+	select {
+	case globalSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		<-slot.sem
+		return false
+	}
+}
+
 func startBuildkitAddrRefresher(ctx context.Context, pool *addrPool, addrsRaw string, oomCooldown time.Duration) {
 	if strings.TrimSpace(addrsRaw) == "" {
 		return
 	}
 
-	go func() {
-		ticker := time.NewTicker(defaultBuildkitAddrRefreshInterval)
-		defer ticker.Stop()
+	go runBuildkitAddrRefresher(ctx, pool, addrsRaw, oomCooldown, defaultBuildkitAddrRefreshInterval)
+}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
+func runBuildkitAddrRefresher(ctx context.Context, pool *addrPool, addrsRaw string, oomCooldown, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-			refreshedAddrs, err := parseBuildkitAddrs(addrsRaw)
-			if err != nil {
-				logError("Failed to refresh buildkit addresses from %q: %v", addrsRaw, err)
-				continue
-			}
-			for _, addr := range refreshedAddrs {
-				if addr != nil {
-					addr.cooldown = oomCooldown
-				}
-			}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 
-			before := pool.addresses()
-			pool.replace(refreshedAddrs)
-			after := pool.addresses()
-			if !sameStringSlice(before, after) {
-				logInfo("Refreshed buildkit address pool: %d -> %d endpoint(s): [%s] -> [%s]",
-					len(before), len(after), strings.Join(before, ", "), strings.Join(after, ", "))
+		refreshedAddrs, err := parseBuildkitAddrs(addrsRaw)
+		if err != nil {
+			logError("Failed to refresh buildkit addresses from %q: %v", addrsRaw, err)
+			continue
+		}
+		for _, addr := range refreshedAddrs {
+			if addr != nil {
+				addr.cooldown = oomCooldown
 			}
 		}
-	}()
+
+		before := pool.addresses()
+		pool.replace(refreshedAddrs)
+		after := pool.addresses()
+		if !sameStringSlice(before, after) {
+			logInfo("Refreshed buildkit address pool: %d -> %d endpoint(s): [%s] -> [%s]",
+				len(before), len(after), strings.Join(before, ", "), strings.Join(after, ", "))
+		}
+	}
 }
 
 func slotAddressKeys(slots []*addrSlot) []string {

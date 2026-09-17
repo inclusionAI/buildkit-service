@@ -91,6 +91,30 @@ func TestFilterBuildJobsTreatsBothFormatsAsSingleSuccess(t *testing.T) {
 	}
 }
 
+func TestFilterBuildJobsCombinesSuccessfulFailedAndPendingHistory(t *testing.T) {
+	jobs := []buildJob{
+		{key: "target-a", specs: []buildSpec{{target: "target-a"}}},
+		{key: "target-b", specs: []buildSpec{{target: "target-b"}}},
+		{key: "target-c", specs: []buildSpec{{target: "target-c"}}},
+	}
+	filtered, existing, skippedSucceeded, skippedFailed, err := filterBuildJobs(jobs, stubBuildResultReader{entries: map[string]resultEntry{
+		"target-a": {Target: "target-a", Success: true},
+		"target-b": {Target: "target-b", Success: false},
+	}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skippedSucceeded != 1 || skippedFailed != 1 {
+		t.Fatalf("skipped success=%d failure=%d", skippedSucceeded, skippedFailed)
+	}
+	if existing["target-a"] != buildOutcomeSucceeded || existing["target-b"] != buildOutcomeFailed {
+		t.Fatalf("existing outcomes = %#v", existing)
+	}
+	if len(filtered) != 1 || filtered[0].key != "target-c" {
+		t.Fatalf("pending jobs = %#v", filtered)
+	}
+}
+
 func TestLoadBuildSpecsExpandsBothFormatsFromImageDirs(t *testing.T) {
 	root := t.TempDir()
 	imageDir := filepath.Join(root, "image-a")
