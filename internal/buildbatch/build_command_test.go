@@ -10,6 +10,40 @@ import (
 	"time"
 )
 
+func TestRunBuildCommandValidationOrder(t *testing.T) {
+	addr := &buildkitAddr{addr: "tcp://127.0.0.1:9094"}
+	tests := []struct {
+		name string
+		opts options
+		want string
+	}{
+		{
+			name: "missing addresses before build mode conflict",
+			opts: options{oci: true, bothFormats: true},
+			want: "--addrs is required",
+		},
+		{
+			name: "build mode conflict before build input",
+			opts: options{addrs: []*buildkitAddr{addr}, oci: true, bothFormats: true},
+			want: "--oci and --both-formats are mutually exclusive",
+		},
+		{
+			name: "missing build input after build mode resolution",
+			opts: options{addrs: []*buildkitAddr{addr}, oci: true},
+			want: "either --image-dirs or a positional [target] is required",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runBuildCommand(test.opts)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("validation error changed: got %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestStreamPreparedBuildJobsStopsBlockedSendOnCancellation(t *testing.T) {
 	sourceRoot := t.TempDir()
 	writeBuildImageDir(t, sourceRoot, "image-a", "example.com/team/image:a")

@@ -171,6 +171,38 @@ func TestRunBuildCommandTimeoutPersistsFailure(t *testing.T) {
 	}
 }
 
+func TestRunBuildCommandStreamingRejectsEmptyInput(t *testing.T) {
+	imageDirs := t.TempDir()
+	stateRoot := t.TempDir()
+	opts := lifecycleBuildOptions(t, stateRoot, "")
+	opts.imageDirs = imageDirs
+
+	err := runBuildCommand(opts)
+	want := fmt.Sprintf("image-dirs %s does not contain any image directories", imageDirs)
+	if err == nil || err.Error() != want {
+		t.Fatalf("empty streaming input returned %v, want %q", err, want)
+	}
+}
+
+func TestRunBuildCommandStreamingPreparationFailureCleansWorkspace(t *testing.T) {
+	imageDirs := t.TempDir()
+	if err := os.WriteFile(filepath.Join(imageDirs, "invalid.txt"), []byte("invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := lifecycleWorkspaceSet(t)
+	stateRoot := t.TempDir()
+	opts := lifecycleBuildOptions(t, stateRoot, "")
+	opts.imageDirs = imageDirs
+
+	err := runBuildCommand(opts)
+	if err == nil || !strings.Contains(err.Error(), "must contain only directories, found invalid.txt") {
+		t.Fatalf("streaming preparation failure returned %v", err)
+	}
+	if leaked := addedLifecycleWorkspaces(before, lifecycleWorkspaceSet(t)); len(leaked) != 0 {
+		t.Fatalf("streaming workspace leaked after preparation failure: %v", leaked)
+	}
+}
+
 func TestRunBuildCommandStreamingFailFastStopsSchedulingAndCleansWorkspace(t *testing.T) {
 	events := installBuildctlLifecycleHelper(t, "fail-first-target")
 	root := t.TempDir()
