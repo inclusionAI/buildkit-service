@@ -1,4 +1,4 @@
-package main
+package buildbatch
 
 import (
 	"fmt"
@@ -66,8 +66,23 @@ func logInfo(format string, args ...any) {
 	logWithLevel("INFO", format, args...)
 }
 
+// LogInfo writes an informational message using the batch command's log format.
+func LogInfo(format string, args ...any) {
+	logInfo(format, args...)
+}
+
 func logError(format string, args ...any) {
 	logWithLevel("ERROR", format, args...)
+}
+
+// LogError writes an error message using the batch command's log format.
+func LogError(format string, args ...any) {
+	logError(format, args...)
+}
+
+// ResetCommandStartTime sets the origin used for elapsed-time logging.
+func ResetCommandStartTime(start time.Time) {
+	resetCommandStartTime(start)
 }
 
 func logWithLevel(level string, format string, args ...any) {

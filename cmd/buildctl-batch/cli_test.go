@@ -1,10 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/inclusionAI/buildkit-service/internal/buildbatch"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -85,5 +89,56 @@ flag|daemon|auth|||false|true|base64-encoded registry auth JSON; written to /roo
 `
 	if got.String() != want {
 		t.Fatalf("CLI surface changed:\n--- got ---\n%s--- want ---\n%s", got.String(), want)
+	}
+}
+
+func TestBuildConfigFromCLI(t *testing.T) {
+	command := buildCLICommand()
+	flags := flag.NewFlagSet(command.Name, flag.ContinueOnError)
+	for _, commandFlag := range command.Flags {
+		if err := commandFlag.Apply(flags); err != nil {
+			t.Fatalf("apply flag %v: %v", commandFlag.Names(), err)
+		}
+	}
+	args := []string{
+		"--image-dirs", "/tmp/images",
+		"--addrs", "tcp://127.0.0.1:1234",
+		"--var", "ONE=1",
+		"--var", "TWO=2",
+		"--concurrency", "3",
+		"--fail-fast",
+		"--both-formats",
+		"--oom-cooldown", "45s",
+		"--result", "/tmp/results.lmdb",
+		"--logs", "/tmp/logs.jsonl",
+		"--timeout", "60",
+		"--retry", "2",
+		"--verbose",
+		"--skip-fail",
+		"  example.com/team/image:test  ",
+	}
+	if err := flags.Parse(args); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+
+	got := buildConfigFromCLI(cli.NewContext(cli.NewApp(), flags, nil))
+	want := buildbatch.Config{
+		ImageDirs:   "/tmp/images",
+		Addrs:       "tcp://127.0.0.1:1234",
+		Variables:   []string{"ONE=1", "TWO=2"},
+		Concurrency: 3,
+		FailFast:    true,
+		BothFormats: true,
+		OOMCooldown: 45 * time.Second,
+		ResultPath:  "/tmp/results.lmdb",
+		LogsPath:    "/tmp/logs.jsonl",
+		Timeout:     60,
+		Retry:       2,
+		Verbose:     true,
+		Target:      "example.com/team/image:test",
+		SkipFail:    true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("build config mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 }
