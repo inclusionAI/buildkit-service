@@ -95,3 +95,9 @@ func TestLoadAuthTokenPreservesValidationAndTrimming(t *testing.T) {
 		t.Fatalf("unexpected empty token error: %v", err)
 	}
 }
+
+func TestApplyNoFileLimitNoop(t *testing.T) {
+	if err := applyNoFileLimit(0); err != nil {
+		t.Fatalf("applyNoFileLimit(0): %v", err)
+	}
+}
