@@ -46,6 +46,13 @@ READMEEOF
 	if strings.Contains(content, "RUN cat >") || strings.Contains(content, "BUILDCTL_BATCH_TITLE") {
 		t.Fatalf("unexpected legacy command or unresolved variable remains:\n%s", content)
 	}
+	sourceDockerfile, err := os.ReadFile(filepath.Join(imageDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sourceDockerfile), "Episode Processing Project") || !strings.Contains(string(sourceDockerfile), "RUN cat >") {
+		t.Fatalf("source Dockerfile was modified: %s", sourceDockerfile)
+	}
 }
 
 func TestPrepareBuildImageDirsRejectsChainedHeredoc(t *testing.T) {
@@ -62,6 +69,8 @@ func TestPrepareBuildImageDirsRejectsChainedHeredoc(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(imageDir, "metadata.json"), []byte(`{"target":"example.com/ns/repo:tag"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
 	prepared, _, err := prepareBuildImageDirs(root, nil)
 	if err == nil || !strings.Contains(err.Error(), "line 2:") || !strings.Contains(err.Error(), "COPY") || prepared != "" {
 		t.Fatalf("expected preparation to fail before build: prepared=%q err=%v", prepared, err)
@@ -70,37 +79,98 @@ func TestPrepareBuildImageDirsRejectsChainedHeredoc(t *testing.T) {
 	if err != nil || !bytes.Equal(got, original) {
 		t.Fatalf("source context modified on rejection: %v", err)
 	}
+	entries, err := os.ReadDir(tempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed preparation leaked workspace: %v", entries)
+	}
 }
 
-func TestBuildVariableParsingAndReplacement(t *testing.T) {
-	vars, err := parseBuildVariables([]string{
-		"BUILDCTL_BATCH_REGISTRY=registry.example.com",
-		"BUILDCTL_BATCH_TAG=v1=debug",
+func TestValidateSourceImageDirErrors(t *testing.T) {
+	t.Run("missing Dockerfile", func(t *testing.T) {
+		dir := t.TempDir()
+		err := validateSourceImageDir(dir)
+		want := dir + ": missing required file Dockerfile"
+		if err == nil || err.Error() != want {
+			t.Fatalf("validation error changed: got %v, want %q", err, want)
+		}
+	})
+
+	t.Run("missing metadata", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := validateSourceImageDir(dir)
+		want := dir + ": missing required file metadata.json"
+		if err == nil || err.Error() != want {
+			t.Fatalf("validation error changed: got %v, want %q", err, want)
+		}
+	})
+
+	t.Run("Dockerfile is not regular", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "Dockerfile"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := validateSourceImageDir(dir)
+		want := dir + ": required file Dockerfile must be a regular file"
+		if err == nil || err.Error() != want {
+			t.Fatalf("validation error changed: got %v, want %q", err, want)
+		}
+	})
+
+	t.Run("metadata is not regular", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, "metadata.json"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := validateSourceImageDir(dir)
+		want := dir + ": required file metadata.json must be a regular file"
+		if err == nil || err.Error() != want {
+			t.Fatalf("validation error changed: got %v, want %q", err, want)
+		}
+	})
+}
+
+func TestPrepareBuildImageDirsHashesBeforeTransformations(t *testing.T) {
+	root := t.TempDir()
+	imageDir := filepath.Join(root, "image-a")
+	if err := os.Mkdir(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "Dockerfile"), []byte("FROM $BUILDCTL_BATCH_BASE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "metadata.json"), []byte(`{"target":"$BUILDCTL_BATCH_TARGET"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantHash, err := sourceContextContentHash(imageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedRoot, scheduleKeys, err := prepareBuildImageDirs(root, map[string]string{
+		"BUILDCTL_BATCH_BASE":   "scratch",
+		"BUILDCTL_BATCH_TARGET": "example.com/team/image:v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vars["BUILDCTL_BATCH_REGISTRY"] != "registry.example.com" || vars["BUILDCTL_BATCH_TAG"] != "v1=debug" {
-		t.Fatalf("unexpected parsed variables: %#v", vars)
+	defer os.RemoveAll(preparedRoot)
+	if scheduleKeys["image-a"] != wantHash {
+		t.Fatalf("schedule hash changed after transformation: got %q, want %q", scheduleKeys["image-a"], wantHash)
 	}
-
-	got, err := replaceBuildVariables(
-		[]byte("FROM $BUILDCTL_BATCH_REGISTRY/ns/repo:${BUILDCTL_BATCH_TAG}\n"),
-		"Dockerfile",
-		vars,
-	)
+	sourceHash, err := sourceContextContentHash(imageDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "FROM registry.example.com/ns/repo:v1=debug\n"; string(got) != want {
-		t.Fatalf("replacement = %q, want %q", got, want)
-	}
-
-	if _, err := replaceBuildVariables([]byte("FROM $BUILDCTL_BATCH_MISSING/repo\n"), "Dockerfile", vars); err == nil || err.Error() != "Dockerfile contains unresolved build variable(s): BUILDCTL_BATCH_MISSING" {
-		t.Fatalf("unexpected unresolved variable error: %v", err)
-	}
-	if _, err := parseBuildVariables([]string{"REGISTRY=example.com"}); err == nil || err.Error() != `invalid --var "REGISTRY=example.com", key must start with BUILDCTL_BATCH_` {
-		t.Fatalf("unexpected invalid variable error: %v", err)
+	if sourceHash != wantHash {
+		t.Fatalf("source workspace changed during preparation: got hash %q, want %q", sourceHash, wantHash)
 	}
 }
 
