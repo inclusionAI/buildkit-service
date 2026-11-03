@@ -12,11 +12,17 @@ import (
 	"time"
 
 	"github.com/inclusionAI/buildkit-service/pkg/dockerfilepreprocess"
+	"github.com/inclusionAI/buildkit-service/pkg/telemetry"
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func (s *buildServer) handleCreateBuild(c echo.Context) error {
+	_, admissionSpan := otel.Tracer(telemetry.Scope).Start(c.Request().Context(), "build.admission_wait")
 	s.admissionMu.Lock()
+	admissionSpan.End()
 	admissionLocked := true
 	defer func() {
 		if admissionLocked {
@@ -56,7 +62,9 @@ func (s *buildServer) handleCreateBuild(c echo.Context) error {
 	controller := http.NewResponseController(c.Response().Writer)
 	deadlineSet := controller.SetReadDeadline(time.Now().Add(uploadReadTimeout)) == nil
 	c.Request().Body = http.MaxBytesReader(c.Response().Writer, c.Request().Body, maxRequestBytes)
+	_, uploadSpan := otel.Tracer(telemetry.Scope).Start(c.Request().Context(), "build.upload")
 	parseErr := c.Request().ParseMultipartForm(32 << 20)
+	uploadSpan.End()
 	if deadlineSet {
 		_ = controller.SetReadDeadline(time.Time{})
 	}
@@ -123,7 +131,10 @@ func (s *buildServer) handleCreateBuild(c echo.Context) error {
 	if maxArchiveFiles <= 0 {
 		maxArchiveFiles = defaultMaxArchiveFiles
 	}
-	if err := extractZip(zipPath, contextParentDir, maxExtractedBytes, maxArchiveFiles); err != nil {
+	_, extractSpan := otel.Tracer(telemetry.Scope).Start(c.Request().Context(), "context.extract")
+	extractErr := extractZip(zipPath, contextParentDir, maxExtractedBytes, maxArchiveFiles)
+	extractSpan.End()
+	if err := extractErr; err != nil {
 		_ = os.RemoveAll(taskDir)
 		if errors.Is(err, errArchiveLimit) {
 			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
@@ -137,13 +148,18 @@ func (s *buildServer) handleCreateBuild(c echo.Context) error {
 	}
 	hashStartedAt := time.Now()
 	fmt.Fprintf(os.Stderr, "buildctl-daemon: hashing source context for task %s at %s\n", id, contextDir)
+	_, hashSpan := otel.Tracer(telemetry.Scope).Start(c.Request().Context(), "context.hash")
 	scheduleKey, err := sourceContextContentHash(contextDir)
+	hashSpan.End()
 	if err != nil {
 		_ = os.RemoveAll(taskDir)
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	fmt.Fprintf(os.Stderr, "buildctl-daemon: source context hash for task %s done in %s key=%s\n", id, time.Since(hashStartedAt).Round(100*time.Millisecond), shortScheduleKey(scheduleKey))
-	if _, err := dockerfilepreprocess.PreprocessDockerfile(filepath.Join(contextDir, "Dockerfile")); err != nil {
+	_, preprocessSpan := otel.Tracer(telemetry.Scope).Start(c.Request().Context(), "dockerfile.preprocess")
+	_, preprocessErr := dockerfilepreprocess.PreprocessDockerfile(filepath.Join(contextDir, "Dockerfile"))
+	preprocessSpan.End()
+	if err := preprocessErr; err != nil {
 		_ = os.RemoveAll(taskDir)
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
@@ -166,7 +182,7 @@ func (s *buildServer) handleCreateBuild(c echo.Context) error {
 		}
 	}
 	syncBuild := queryBool(firstNonEmpty(c.FormValue("sync"), c.QueryParam("sync")))
-	buildParentCtx := context.Background()
+	buildParentCtx := trace.ContextWithSpan(context.Background(), trace.SpanFromContext(c.Request().Context()))
 	if syncBuild {
 		buildParentCtx = c.Request().Context()
 	}
@@ -192,7 +208,13 @@ func (s *buildServer) handleCreateBuild(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
+	buildCtx, buildSpan := otel.Tracer(telemetry.Scope).Start(buildCtx, "build", trace.WithAttributes(attribute.String("build.id", id), attribute.String("build.mode", mode), attribute.String("build.image_type", imageType)))
+	_, queueSpan := otel.Tracer(telemetry.Scope).Start(buildCtx, "build.queue")
 	task := &buildTask{
+		queueSpan:     queueSpan,
+		span:          buildSpan,
+		TraceID:       buildSpan.SpanContext().TraceID().String(),
+		queuedAt:      time.Now(),
 		ID:            id,
 		Status:        buildStatusQueued,
 		Image:         image,
@@ -214,12 +236,17 @@ func (s *buildServer) handleCreateBuild(c echo.Context) error {
 		cancel:        cancel,
 		done:          make(chan struct{}),
 	}
+	if !buildSpan.SpanContext().IsValid() {
+		task.TraceID = ""
+	}
 	s.store.add(task)
+	telemetry.Event(buildCtx, "build_queued", "build_id", id, "mode", mode, "image_type", imageType)
 	done := task.done
 	if s.scheduler == nil {
 		go s.runBuildTask(task.ID)
 	} else if err := s.scheduler.enqueue(task.Mode, task.ID); err != nil {
 		task.cancel()
+		s.finishTask(task.ID, buildStatusCanceled, nil, context.Canceled)
 		close(task.done)
 		s.cleanupTask(task.ID)
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})

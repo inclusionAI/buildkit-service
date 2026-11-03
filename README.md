@@ -129,6 +129,7 @@ The referenced Docker config controls target push and manifest-check credentials
 | Batch-build / convert many Dockerfiles (CLI) | [docs/buildctl-batch.md](docs/buildctl-batch.md) |
 | Submit single builds over HTTP | [docs/buildctl-daemon.md](docs/buildctl-daemon.md) |
 | Speed up pip / npm / apt / yum / apk / git in Dockerfiles | [docs/package-mirror.md](docs/package-mirror.md) |
+| Monitor workers, queues, capacity, logs and traces | [docs/observability.md](docs/observability.md) |
 | Preheat images into a Dragonfly P2P cluster | [docs/preheat.md](docs/preheat.md) |
 
 ## Repository layout
@@ -154,7 +155,7 @@ Use `make dev-setup` and `make dev-up` for a persistent environment built from t
 Requires Go 1.23 or newer. The batch CLI requires Linux, a C compiler and LMDB development files (`liblmdb-dev` on Debian/Ubuntu); its result store is unavailable without CGO. Cross-compiling it requires a matching Linux C toolchain and LMDB library. On macOS, build and run the container image or use the local E2E suite. Docker with Buildx is required to build the container images.
 
 ```bash
-make all      # builds bin/buildctl-batch and bin/buildctl-daemon
+make all      # builds buildctl-batch, buildctl-daemon, and buildkit-observer
 make test     # go test ./...
 docker build -f chart/images/buildkit/Dockerfile -t buildkit-service:dev .
 ```

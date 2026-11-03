@@ -50,3 +50,7 @@ artifacts/e2e-tools/bin/kubectl --kubeconfig artifacts/dev/kubeconfig -n buildki
 ```
 
 BuildKit uses TCP port 9094. The registry is available at `http://127.0.0.1:15000` on the host; builds and Pods use `registry.buildkit-dev.svc.cluster.local:5000`. Push build outputs using that in-cluster name. Registry routing for containerd is configured only inside this environment's node.
+
+## Observability validation
+
+Use the separate [observability profile](../../docs/observability.md#local-open-source-stack) to build the current sources and run Prometheus, Grafana, Collector, Tempo, Loki, Alertmanager and cAdvisor with two workers. `make observability` owns a separate Compose project, ports and data; the kind development and E2E environments remain independent.

@@ -130,5 +130,70 @@
         "linux-arm64": "440cf7add0aee27ebc93fada965523c1dc2e0ab340d4348da2215737fc0d76ad"
       }
     }
+  },
+  "observability_images": {
+    "prometheus": {
+      "repository": "prom/prometheus",
+      "version": "v3.5.0",
+      "platforms": {
+        "amd64": "sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
+      },
+      "source": "https://github.com/prometheus/prometheus",
+      "license": "Apache-2.0"
+    },
+    "grafana": {
+      "repository": "grafana/grafana",
+      "version": "12.1.0",
+      "platforms": {
+        "amd64": "sha256:6ac590e7cabc2fbe8d7b8fc1ce9c9f0582177b334e0df9c927ebd9670469440f"
+      },
+      "source": "https://github.com/grafana/grafana",
+      "license": "AGPL-3.0-only"
+    },
+    "tempo": {
+      "repository": "grafana/tempo",
+      "version": "2.8.2",
+      "platforms": {
+        "amd64": "sha256:0ef775495967cd5d7a6b2e146b6ea695d624803c8db8349fb8ce4164f719f9b7"
+      },
+      "source": "https://github.com/grafana/tempo",
+      "license": "AGPL-3.0-only"
+    },
+    "loki": {
+      "repository": "grafana/loki",
+      "version": "3.5.3",
+      "platforms": {
+        "amd64": "sha256:3165cecce301ce5b9b6e3530284b080934a05cd5cafac3d3d82edcb887b45ecd"
+      },
+      "source": "https://github.com/grafana/loki",
+      "license": "AGPL-3.0-only"
+    },
+    "collector": {
+      "repository": "otel/opentelemetry-collector-contrib",
+      "version": "0.130.1",
+      "platforms": {
+        "amd64": "sha256:9c247564e65ca19f97d891cca19a1a8d291ce631b890885b44e3503c5fdb3895"
+      },
+      "source": "https://github.com/open-telemetry/opentelemetry-collector-contrib",
+      "license": "Apache-2.0"
+    },
+    "alertmanager": {
+      "repository": "prom/alertmanager",
+      "version": "v0.28.1",
+      "platforms": {
+        "amd64": "sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba"
+      },
+      "source": "https://github.com/prometheus/alertmanager",
+      "license": "Apache-2.0"
+    },
+    "cadvisor": {
+      "repository": "ghcr.io/google/cadvisor",
+      "version": "v0.60.6",
+      "platforms": {
+        "amd64": "sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a"
+      },
+      "source": "https://github.com/google/cadvisor",
+      "license": "Apache-2.0"
+    }
   }
 }

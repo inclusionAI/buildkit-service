@@ -21,6 +21,8 @@ jobs:
         run: |
           make e2e-setup
           make e2e-setup
+      - name: Test observability exporters and chart integration
+        run: make observability-unit
 
   kind-e2e:
     runs-on: ubuntu-24.04
@@ -135,3 +137,31 @@ jobs:
                   destination = source if not relative else source.parent / relative
                   assert destination.exists(), f'{source} -> {target}'
           PY
+
+  observability-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Build sources and verify the local observability stack
+        run: make observability
+      - name: Capture diagnostics
+        if: always()
+        run: make observability-logs
+      - name: Stop only owned services and retain data
+        if: always()
+        run: make observability-down
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: observability-linux-amd64
+          retention-days: 7
+          path: |
+            artifacts/observability/report.json
+            artifacts/observability/tests/**/report.json
+            artifacts/observability/source-files.json
+            artifacts/observability/tests/**/trace.json
+            artifacts/observability/tests/**/correlated-logs.json
+            artifacts/observability/tests/**/worker-history.json
+            artifacts/observability/*.log

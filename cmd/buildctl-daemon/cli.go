@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/inclusionAI/buildkit-service/internal/builddaemon"
+	"github.com/inclusionAI/buildkit-service/pkg/telemetry"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -61,6 +62,11 @@ func newDaemonApp(run daemonRunner) *cli.App {
 		Action: func(c *cli.Context) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			shutdown, err := telemetry.Start(ctx, "buildctl-daemon")
+			if err != nil {
+				return err
+			}
+			defer shutdown()
 			return run(ctx, configFromCLI(c))
 		},
 	}

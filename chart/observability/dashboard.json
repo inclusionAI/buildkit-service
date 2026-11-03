@@ -1,0 +1,453 @@
+{
+  "uid": "buildkit-service",
+  "title": "BuildKit Service",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Worker availability",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{buildkit_component=\"worker\"}",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Queue depth",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildctl_daemon_builds_queued",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Oldest queue age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildctl_daemon_queue_oldest_age_seconds",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Worker slots active",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildctl_daemon_worker_slots_active",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Build duration p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(buildctl_daemon_build_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Build outcomes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(buildctl_daemon_build_duration_seconds_count[5m]))",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Cache allocated / budget",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_service_cache_allocated_bytes / buildkit_service_cache_limit_bytes",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Filesystem available bytes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_service_filesystem_available_bytes",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Free inodes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_service_filesystem_free_inodes",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Cache scans healthy",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_service_cache_scan_success",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Worker memory",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "process_resident_memory_bytes{buildkit_component=\"worker\"}",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Container working set",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_memory_working_set_bytes{container=\"buildkitd\"} or container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_service=~\"worker1|worker2\"}",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Container CPU cores",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(container_cpu_usage_seconds_total{container=\"buildkitd\"}[5m]) or rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_service=~\"worker1|worker2\"}[5m])",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Native builds",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_builds_total",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Native cached steps",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_builds_steps_total{kind=\"cached\"}",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Retries",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildctl_daemon_retries_total",
+          "legendFormat": "{{instance}} {{worker}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Active builds from all clients",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_worker_builds_active",
+          "legendFormat": "{{instance}} {{state}}"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "API cache accounting bytes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_worker_cache_bytes",
+          "legendFormat": "{{instance}} {{state}}"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Worker API sampling health",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "buildkit_worker_observer_up",
+          "legendFormat": "{{instance}} {{state}}"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Worker API sample age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - buildkit_worker_observer_last_success_timestamp_seconds",
+          "legendFormat": "{{instance}} {{state}}"
+        }
+      ]
+    }
+  ]
+}

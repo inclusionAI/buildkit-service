@@ -10,12 +10,14 @@ import (
 	"syscall"
 
 	"github.com/inclusionAI/buildkit-service/internal/buildbatch"
+	"github.com/inclusionAI/buildkit-service/pkg/telemetry"
 	cli "github.com/urfave/cli/v2"
 )
 
 const pprofServerEnv = "BUILDCTL_BATCH_PPROF_SERVER"
 
 func newCLIApp() *cli.App {
+	shutdown := func() {}
 	return &cli.App{
 		Name:  "buildctl-batch",
 		Usage: "batch helper for build, export, and preheat workflows",
@@ -26,6 +28,11 @@ func newCLIApp() *cli.App {
 			},
 		},
 		Before: func(c *cli.Context) error {
+			var err error
+			shutdown, err = telemetry.Start(c.Context, "buildctl-batch")
+			if err != nil {
+				return err
+			}
 			if addr := resolvePprofServerAddr(c.String("pprof-server")); addr != "" {
 				go func() {
 					buildbatch.LogInfo("Starting pprof server on %s", addr)
@@ -36,6 +43,7 @@ func newCLIApp() *cli.App {
 			}
 			return nil
 		},
+		After: func(c *cli.Context) error { shutdown(); return nil },
 		Commands: []*cli.Command{
 			buildCLICommand(),
 			exportCLICommand(),

@@ -102,6 +102,10 @@ spec:
             - --pprof-listen
             - {{ .Values.buildctlDaemon.pprof.listen | quote }}
             {{- end }}
+          {{- if .Values.observability.tracing.enabled }}
+          env:
+            {{- include "buildkit-service.telemetryEnv" (dict "root" . "service" "buildctl-daemon") | nindent 12 }}
+          {{- end }}
           image: {{ include "buildkit-service.buildctlDaemonImage" . }}
           imagePullPolicy: {{ include "buildkit-service.buildctlDaemonImagePullPolicy" . }}
           livenessProbe:
@@ -138,6 +142,11 @@ spec:
           terminationMessagePath: {{ .Values.terminationMessagePath }}
           terminationMessagePolicy: {{ .Values.terminationMessagePolicy }}
           volumeMounts:
+            {{- if .Values.observability.tracing.caSecretName }}
+            - name: otel-ca
+              mountPath: /var/run/secrets/otel
+              readOnly: true
+            {{- end }}
             - name: daemon-token
               mountPath: /var/run/secrets/buildctl-daemon
               readOnly: true
@@ -167,6 +176,11 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+        {{- if .Values.observability.tracing.caSecretName }}
+        - name: otel-ca
+          secret:
+            secretName: {{ .Values.observability.tracing.caSecretName }}
+        {{- end }}
         - name: daemon-token
           secret:
             secretName: {{ include "buildkit-service.buildctlDaemonSecretName" . }}

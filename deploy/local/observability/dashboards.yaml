@@ -1,0 +1,11 @@
+{
+  "apiVersion": 1,
+  "providers": [
+    {
+      "name": "buildkit",
+      "options": {
+        "path": "/var/lib/grafana/dashboards"
+      }
+    }
+  ]
+}

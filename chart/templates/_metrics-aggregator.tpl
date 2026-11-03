@@ -82,12 +82,13 @@ def job_dirsize_sum(job, out, up):
     used = 0.0
     total = 0.0
     ok = 0
+    succeeded = 0
     ips = resolve(job["dns"]) or [job["dns"]]
     for ip in ips:
         url = "http://%s:%d%s" % (ip, job["port"], job.get("path", "/metrics"))
         try:
             text = http_get(url)
-            ok = 1
+            succeeded += 1
         except Exception:
             continue
         for name, _labels, value in parse_prom(text):
@@ -101,7 +102,10 @@ def job_dirsize_sum(job, out, up):
     out.append("# HELP %s_cache_total_bytes Aggregated cache total capacity." % prefix)
     out.append("# TYPE %s_cache_total_bytes gauge" % prefix)
     out.append("%s_cache_total_bytes %d" % (prefix, int(total)))
-    up[job.get("name", prefix)] = ok
+    up[job.get("name", prefix)] = int(succeeded == len(ips))
+    target = job.get("name", prefix)
+    out.append('metrics_aggregator_targets_expected{target="%s"} %d' % (target, len(ips)))
+    out.append('metrics_aggregator_targets_scraped{target="%s"} %d' % (target, succeeded))
 
 
 def job_passthrough(job, out, up):

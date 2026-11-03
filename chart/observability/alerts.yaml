@@ -1,0 +1,52 @@
+groups:
+  - name: buildkit-service
+    rules:
+      - alert: BuildKitTargetDown
+        expr: up{buildkit_component=~"worker|worker-state|cache|daemon|collector"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: A BuildKit telemetry target is unavailable
+      - alert: BuildKitCacheScanFailed
+        expr: buildkit_service_cache_scan_success == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: BuildKit cache usage is unknown because directory scanning failed
+      - alert: BuildKitCacheBudgetHigh
+        expr: buildkit_service_cache_allocated_bytes / buildkit_service_cache_limit_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A worker cache exceeds 80 percent of its explicit budget
+      - alert: BuildKitFilesystemLow
+        expr: buildkit_service_filesystem_available_bytes < 10737418240
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The backing filesystem has less than 10 GiB available
+      - alert: BuildKitQueueStalled
+        expr: buildctl_daemon_queue_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A build has waited in the queue for over five minutes
+      - alert: BuildKitFailureRateHigh
+        expr: sum(rate(buildctl_daemon_builds_failed_total[10m])) / clamp_min(sum(rate(buildctl_daemon_builds_succeeded_total[10m])) + sum(rate(buildctl_daemon_builds_failed_total[10m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Build failure rate exceeds 20 percent
+      - alert: BuildKitWorkerStateUnknown
+        expr: buildkit_worker_observer_up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Read-only worker state sampling is failing; retained values may be stale

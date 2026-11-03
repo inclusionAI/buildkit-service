@@ -1,0 +1,396 @@
+{
+  "services": {
+    "worker1": {
+      "image": "${OBS_SERVICE_IMAGE}",
+      "entrypoint": [
+        "/bin/sh",
+        "/etc/observability/worker-entrypoint.sh"
+      ],
+      "command": [
+        "--addr",
+        "tcp://0.0.0.0:9094",
+        "--debugaddr",
+        "0.0.0.0:6060",
+        "--config",
+        "/etc/buildkit/buildkitd.toml",
+        "--log-format",
+        "json"
+      ],
+      "privileged": true,
+      "cpus": 2,
+      "mem_limit": "3g",
+      "volumes": [
+        "cache1:/var/lib/buildkit",
+        "${OBS_RUN_DIR}/config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro",
+        "${OBS_RUN_DIR}/config/worker-entrypoint.sh:/etc/observability/worker-entrypoint.sh:ro"
+      ],
+      "environment": {
+        "OTEL_SERVICE_NAME": "buildkit-worker1",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_BSP_SCHEDULE_DELAY": "100",
+        "OBS_WORKER_MEMORY_BYTES": "3221225472"
+      },
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      },
+      "cgroup": "private"
+    },
+    "cache1": {
+      "image": "${OBS_IMAGE_PYTHON}",
+      "entrypoint": [
+        "python3",
+        "/exporter.py"
+      ],
+      "volumes": [
+        "cache1:/cache:ro",
+        "${OBS_RUN_DIR}/config/exporter.py:/exporter.py:ro"
+      ],
+      "environment": {
+        "METRIC_PREFIX": "buildkit_service",
+        "TARGETS": "buildkit=/cache",
+        "DIR_STATS_TTL_SECONDS": "2",
+        "CACHE_LIMIT_BYTES": "2147483648"
+      }
+    },
+    "worker2": {
+      "image": "${OBS_SERVICE_IMAGE}",
+      "entrypoint": [
+        "/bin/sh",
+        "/etc/observability/worker-entrypoint.sh"
+      ],
+      "command": [
+        "--addr",
+        "tcp://0.0.0.0:9094",
+        "--debugaddr",
+        "0.0.0.0:6060",
+        "--config",
+        "/etc/buildkit/buildkitd.toml",
+        "--log-format",
+        "json"
+      ],
+      "privileged": true,
+      "cpus": 2,
+      "mem_limit": "3g",
+      "volumes": [
+        "cache2:/var/lib/buildkit",
+        "${OBS_RUN_DIR}/config/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro",
+        "${OBS_RUN_DIR}/config/worker-entrypoint.sh:/etc/observability/worker-entrypoint.sh:ro"
+      ],
+      "environment": {
+        "OTEL_SERVICE_NAME": "buildkit-worker2",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_BSP_SCHEDULE_DELAY": "100",
+        "OBS_WORKER_MEMORY_BYTES": "3221225472"
+      },
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      },
+      "cgroup": "private"
+    },
+    "cache2": {
+      "image": "${OBS_IMAGE_PYTHON}",
+      "entrypoint": [
+        "python3",
+        "/exporter.py"
+      ],
+      "volumes": [
+        "cache2:/cache:ro",
+        "${OBS_RUN_DIR}/config/exporter.py:/exporter.py:ro"
+      ],
+      "environment": {
+        "METRIC_PREFIX": "buildkit_service",
+        "TARGETS": "buildkit=/cache",
+        "DIR_STATS_TTL_SECONDS": "2",
+        "CACHE_LIMIT_BYTES": "2147483648"
+      }
+    },
+    "daemon": {
+      "image": "${OBS_SERVICE_IMAGE}",
+      "entrypoint": [
+        "buildctl-daemon"
+      ],
+      "command": [
+        "--listen",
+        ":8080",
+        "--buildkitd-addr",
+        "tcp://worker1:9094,tcp://worker2:9094",
+        "--auth-token-file",
+        "/run/secrets/api-token",
+        "--work-dir",
+        "/work",
+        "--max-concurrency",
+        "1",
+        "--addr-concurrency",
+        "1",
+        "--registry-check-host-rules",
+        "registry:5000=registry:5000"
+      ],
+      "environment": {
+        "OTEL_SERVICE_NAME": "buildctl-daemon",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_BSP_SCHEDULE_DELAY": "100"
+      },
+      "ports": [
+        "127.0.0.1::8080"
+      ],
+      "volumes": [
+        "work:/work",
+        "${OBS_RUN_DIR}/api-token:/run/secrets/api-token:ro"
+      ],
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "registry": {
+      "image": "${OBS_IMAGE_REGISTRY}",
+      "ports": [
+        "127.0.0.1::5000"
+      ],
+      "environment": {
+        "OTEL_TRACES_EXPORTER": "none"
+      },
+      "volumes": [
+        "registry:/var/lib/registry"
+      ]
+    },
+    "prometheus": {
+      "image": "${OBS_IMAGE_PROMETHEUS}",
+      "command": [
+        "--config.file=/etc/prometheus/prometheus.yaml",
+        "--storage.tsdb.path=/prometheus",
+        "--storage.tsdb.retention.time=7d",
+        "--enable-feature=native-histograms"
+      ],
+      "volumes": [
+        "${OBS_RUN_DIR}/config/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro",
+        "${OBS_RUN_DIR}/config/alerts.yaml:/etc/prometheus/alerts.yaml:ro",
+        "prometheus:/prometheus"
+      ],
+      "ports": [
+        "127.0.0.1::9090"
+      ]
+    },
+    "alertmanager": {
+      "image": "${OBS_IMAGE_ALERTMANAGER}",
+      "command": [
+        "--config.file=/etc/alertmanager/alertmanager.yaml"
+      ],
+      "volumes": [
+        "${OBS_RUN_DIR}/config/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro",
+        "alertmanager:/alertmanager"
+      ],
+      "ports": [
+        "127.0.0.1::9093"
+      ]
+    },
+    "tempo": {
+      "image": "${OBS_IMAGE_TEMPO}",
+      "user": "0:0",
+      "command": [
+        "-config.file=/etc/tempo.yaml"
+      ],
+      "volumes": [
+        "${OBS_RUN_DIR}/config/tempo.yaml:/etc/tempo.yaml:ro",
+        "tempo:/var/tempo"
+      ],
+      "ports": [
+        "127.0.0.1::3200"
+      ]
+    },
+    "loki": {
+      "image": "${OBS_IMAGE_LOKI}",
+      "user": "0:0",
+      "command": [
+        "-config.file=/etc/loki.yaml"
+      ],
+      "volumes": [
+        "${OBS_RUN_DIR}/config/loki.yaml:/etc/loki.yaml:ro",
+        "loki:/loki"
+      ],
+      "ports": [
+        "127.0.0.1::3100"
+      ]
+    },
+    "collector": {
+      "image": "${OBS_IMAGE_COLLECTOR}",
+      "user": "0:0",
+      "command": [
+        "--config=/etc/collector.yaml"
+      ],
+      "volumes": [
+        "${OBS_RUN_DIR}/config/collector.yaml:/etc/collector.yaml:ro",
+        "${OBS_RUN_DIR}/logs:/logs:ro",
+        "collector:/var/lib/otelcol"
+      ],
+      "ports": [
+        "127.0.0.1::13133"
+      ]
+    },
+    "cadvisor": {
+      "image": "${OBS_IMAGE_CADVISOR}",
+      "privileged": true,
+      "command": [
+        "--docker_only=true",
+        "--housekeeping_interval=5s",
+        "--containerd-namespace=moby"
+      ],
+      "volumes": [
+        "/:/rootfs:ro",
+        "/var/run:/var/run:ro",
+        "/sys:/sys:ro",
+        "${OBS_DOCKER_ROOT}:/var/lib/docker:ro"
+      ],
+      "devices": [
+        "/dev/kmsg:/dev/kmsg"
+      ]
+    },
+    "grafana": {
+      "image": "${OBS_IMAGE_GRAFANA}",
+      "user": "0:0",
+      "environment": {
+        "GF_AUTH_ANONYMOUS_ENABLED": "true",
+        "GF_AUTH_ANONYMOUS_ORG_ROLE": "Viewer",
+        "GF_ANALYTICS_REPORTING_ENABLED": "false",
+        "GF_ANALYTICS_CHECK_FOR_UPDATES": "false"
+      },
+      "volumes": [
+        "${OBS_RUN_DIR}/config/datasources.yaml:/etc/grafana/provisioning/datasources/observability.yaml:ro",
+        "${OBS_RUN_DIR}/config/dashboards.yaml:/etc/grafana/provisioning/dashboards/observability.yaml:ro",
+        "${OBS_RUN_DIR}/config/dashboard.json:/var/lib/grafana/dashboards/buildkit.json:ro",
+        "grafana:/var/lib/grafana"
+      ],
+      "ports": [
+        "127.0.0.1::3000"
+      ]
+    },
+    "observer1": {
+      "image": "${OBS_SERVICE_IMAGE}",
+      "entrypoint": [
+        "buildkit-observer"
+      ],
+      "command": [
+        "--addr",
+        "tcp://worker1:9094",
+        "--interval",
+        "2s",
+        "--timeout",
+        "2s"
+      ],
+      "mem_limit": "128m"
+    },
+    "observer2": {
+      "image": "${OBS_SERVICE_IMAGE}",
+      "entrypoint": [
+        "buildkit-observer"
+      ],
+      "command": [
+        "--addr",
+        "tcp://worker2:9094",
+        "--interval",
+        "2s",
+        "--timeout",
+        "2s"
+      ],
+      "mem_limit": "128m"
+    }
+  },
+  "volumes": {
+    "cache1": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/cache1"
+      }
+    },
+    "cache2": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/cache2"
+      }
+    },
+    "work": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/work"
+      }
+    },
+    "registry": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/registry"
+      }
+    },
+    "prometheus": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/prometheus"
+      }
+    },
+    "alertmanager": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/alertmanager"
+      }
+    },
+    "tempo": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/tempo"
+      }
+    },
+    "loki": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/loki"
+      }
+    },
+    "grafana": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/grafana"
+      }
+    },
+    "collector": {
+      "driver": "local",
+      "driver_opts": {
+        "type": "none",
+        "o": "bind",
+        "device": "${OBS_RUN_DIR}/data/collector"
+      }
+    }
+  }
+}

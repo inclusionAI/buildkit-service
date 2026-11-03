@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/inclusionAI/buildkit-service/pkg/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"io"
 	"os"
 	"os/exec"
@@ -108,6 +112,9 @@ func readFileTail(path string, maxBytes int64) (string, error) {
 
 func executeBuild(ctx context.Context, spec buildSpec, addr *buildkitAddr, opts options) resultEntry {
 	startedAt := time.Now()
+	ctx, span := otel.Tracer(telemetry.Scope).Start(ctx, "batch.build")
+	defer span.End()
+	span.SetAttributes(attribute.String("build.worker", addr.addr), attribute.String("build.image", spec.target))
 	nodeIP := addr.nodeIP
 	if strings.TrimSpace(nodeIP) == "" {
 		nodeIP = nodeIPFromBuildkitAddr(addr.addr)
@@ -128,6 +135,7 @@ func executeBuild(ctx context.Context, spec buildSpec, addr *buildkitAddr, opts 
 	args := buildCommandArgs(spec, addr)
 
 	cmd := exec.CommandContext(buildCtx, "buildctl", args...)
+	cmd.Env = telemetry.TraceEnvironment(buildCtx, os.Environ())
 	output, outputErr := newBuildOutputCapture()
 	if outputErr != nil {
 		return resultEntry{
@@ -150,6 +158,13 @@ func executeBuild(ctx context.Context, spec buildSpec, addr *buildkitAddr, opts 
 	}
 
 	err := cmd.Run()
+	result := "succeeded"
+	if err != nil {
+		result = "failed"
+		span.SetStatus(codes.Error, "buildctl failed")
+	}
+	span.SetAttributes(attribute.String("build.result", result))
+	telemetry.Event(ctx, "batch_build_finished", "worker", addr.addr, "image", spec.target, "result", result)
 	finishedAt := time.Now()
 	elapsed := finishedAt.Sub(startedAt)
 	logs, logErr := output.closeAndReadTail(err != nil)

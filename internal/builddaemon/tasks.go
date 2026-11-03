@@ -12,7 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/inclusionAI/buildkit-service/pkg/telemetry"
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -24,6 +29,11 @@ const (
 )
 
 type buildTask struct {
+	TraceID          string `json:"trace_id,omitempty"`
+	queuedAt         time.Time
+	observed         bool
+	span             trace.Span
+	queueSpan        trace.Span
 	ID               string            `json:"id"`
 	Status           string            `json:"status"`
 	Image            string            `json:"image"`
@@ -54,6 +64,7 @@ type buildTask struct {
 }
 
 type buildTaskView struct {
+	TraceID              string     `json:"trace_id,omitempty"`
 	ID                   string     `json:"id"`
 	Status               string     `json:"status"`
 	Image                string     `json:"image"`
@@ -221,6 +232,7 @@ func viewTask(task *buildTask) buildTaskView {
 	}
 	return buildTaskView{
 		ID:                   task.ID,
+		TraceID:              task.TraceID,
 		Status:               task.Status,
 		Image:                task.Image,
 		Mode:                 task.Mode,
@@ -298,6 +310,8 @@ func (s *buildServer) runBuildTask(id string) {
 		var err error
 		for attempt := 0; attempt <= snapshot.retry; attempt++ {
 			if attempt > 0 {
+				s.metrics.init()
+				s.metrics.retries.WithLabelValues("build_retry").Inc()
 				s.markTaskQueued(id)
 				fmt.Fprintf(logWriter, "retry build %s image %s attempt %d/%d after error: %v\n", step.Format, step.Image, attempt, snapshot.retry, err)
 				if !waitRetryInterval(snapshot.ctx, snapshot.retryInterval) {
@@ -349,16 +363,36 @@ func (s *buildServer) runBuildStepAttempt(id string, snapshot *buildTask, step b
 		}
 
 		started := time.Now()
+		assigned := false
 		s.store.update(id, func(task *buildTask) {
+			if task.Status == buildStatusCanceled || task.observed {
+				return
+			}
+			assigned = true
+			if task.queueSpan != nil {
+				task.queueSpan.End()
+				task.queueSpan = nil
+			}
 			if task.StartedAt == nil {
+				s.metrics.init()
+				if !task.CreatedAt.IsZero() {
+					s.metrics.queue.WithLabelValues(task.Mode).Observe(started.Sub(task.CreatedAt).Seconds())
+				}
 				task.StartedAt = &started
 			}
 			task.Status = buildStatusRunning
 			task.BuildkitAddr = slot.addr.addr
 			task.NodeIP = slot.addr.nodeIP
 		})
+		if !assigned {
+			<-slot.sem
+			releaseGlobal()
+			return nil, context.Canceled
+		}
 		fmt.Fprintf(logFile, "build %s image %s on %s\n", step.Format, step.Image, slot.addr.addr)
-		exporter, err := s.runner.Build(snapshot.ctx, buildRunRequest{
+		attemptCtx, attemptSpan := otel.Tracer(telemetry.Scope).Start(snapshot.ctx, "buildkit.solve", trace.WithAttributes(attribute.String("build.worker", slot.addr.addr), attribute.String("build.format", step.Format)))
+		telemetry.Event(attemptCtx, "build_attempt_started", "build_id", id, "worker", slot.addr.addr, "format", step.Format)
+		exporter, err := s.runner.Build(attemptCtx, buildRunRequest{
 			ContextDir:   contextDir,
 			BuildkitAddr: slot.addr.addr,
 			Image:        step.Image,
@@ -367,6 +401,13 @@ func (s *buildServer) runBuildStepAttempt(id string, snapshot *buildTask, step b
 			NoCache:      snapshot.noCache,
 			BuildArgs:    buildArgs,
 		}, logFile)
+		attemptSpan.SetAttributes(attribute.String("build.result", outcome(err)))
+		if err != nil {
+			attemptSpan.SetStatus(codes.Error, outcome(err))
+		}
+		attemptSpan.End()
+		s.metrics.init()
+		s.metrics.attempt.WithLabelValues(step.Format, outcome(err)).Observe(time.Since(started).Seconds())
 		<-slot.sem
 		releaseGlobal()
 		if err == nil || snapshot.ctx.Err() != nil {
@@ -375,6 +416,8 @@ func (s *buildServer) runBuildStepAttempt(id string, snapshot *buildTask, step b
 		if !isRetryableBuildkitAddrError(err, slot.addr.addr) {
 			return exporter, err
 		}
+		s.metrics.init()
+		s.metrics.retries.WithLabelValues("worker_failover").Inc()
 		excludedAddrs[slot.addr.addr] = true
 		fmt.Fprintf(logFile, "retryable buildkit address error on %s: %v; refreshing addresses and trying another worker\n", slot.addr.addr, err)
 		if refreshErr := s.refreshBuildkitAddrs(); refreshErr != nil {
@@ -387,6 +430,12 @@ func (s *buildServer) markTaskQueued(id string) {
 	s.store.update(id, func(task *buildTask) {
 		if task.Status != buildStatusQueued && task.Status != buildStatusRunning {
 			return
+		}
+		if task.Status != buildStatusQueued || task.queuedAt.IsZero() {
+			task.queuedAt = time.Now()
+			if task.ctx != nil {
+				_, task.queueSpan = otel.Tracer(telemetry.Scope).Start(task.ctx, "build.queue")
+			}
 		}
 		task.Status = buildStatusQueued
 		task.BuildkitAddr = ""
@@ -411,7 +460,11 @@ func waitRetryInterval(ctx context.Context, interval time.Duration) bool {
 func (s *buildServer) finishTask(id, status string, exporter map[string]string, err error) {
 	finished := time.Now()
 	var applied string
+	var terminal *buildTask
 	s.store.update(id, func(task *buildTask) {
+		if task.observed {
+			return
+		}
 		if task.Status == buildStatusCanceled && status != buildStatusCanceled {
 			return
 		}
@@ -422,7 +475,12 @@ func (s *buildServer) finishTask(id, status string, exporter map[string]string, 
 			task.Error = err.Error()
 		}
 		applied = status
+		task.observed = true
+		terminal = cloneTask(task)
 	})
+	if terminal != nil {
+		s.observeTerminal(terminal, err)
+	}
 	switch applied {
 	case buildStatusSucceeded:
 		atomic.AddInt64(&s.metrics.succeeded, 1)
