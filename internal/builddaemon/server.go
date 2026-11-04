@@ -1,6 +1,7 @@
 package builddaemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,18 +32,11 @@ type buildServer struct {
 	admissionMu sync.Mutex
 }
 
-// daemonMetrics holds monotonic build outcome counters. The running gauge is
-// derived from the task store at scrape time, so it stays accurate even after
-// terminal tasks are reaped.
-type daemonMetrics struct {
-	succeeded int64
-	failed    int64
-}
-
 func (s *buildServer) routes() *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	e.Use(s.observeHTTP)
 	e.GET("/healthz", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -118,6 +112,9 @@ func (s *buildServer) handleCancelBuild(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "build not found"})
 	}
+	if task.Status == buildStatusCanceled {
+		s.finishTask(task.ID, buildStatusCanceled, nil, context.Canceled)
+	}
 	return c.JSON(http.StatusAccepted, viewTask(task))
 }
 
@@ -158,6 +155,9 @@ func (s *buildServer) handleMetrics(c echo.Context) error {
 			fmt.Fprintf(&b, "buildctl_daemon_mode_builds_queued{mode=%q} %d\n", mode, s.store.countByModeAndStatus(mode, buildStatusQueued))
 			fmt.Fprintf(&b, "buildctl_daemon_mode_builds_running{mode=%q} %d\n", mode, s.store.countByModeAndStatus(mode, buildStatusRunning))
 		}
+	}
+	if err := s.extraMetrics(&b); err != nil {
+		return err
 	}
 	return c.Blob(http.StatusOK, "text/plain; version=0.0.4", []byte(b.String()))
 }

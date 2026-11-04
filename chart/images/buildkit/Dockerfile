@@ -31,6 +31,8 @@ COPY pkg/ pkg/
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o /out/buildctl-daemon ./cmd/buildctl-daemon && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -o /out/buildkit-observer ./cmd/buildkit-observer && \
     CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -tags netgo,osusergo -ldflags '-linkmode external -extldflags "-static"' \
     -o /out/buildctl-batch ./cmd/buildctl-batch && \
@@ -62,5 +64,6 @@ RUN if command -v apk >/dev/null 2>&1; then \
     fi
 COPY --from=cni-plugins /out/ /usr/lib/cni/
 COPY --from=builder /out/buildctl-daemon /usr/bin/buildctl-daemon
+COPY --from=builder /out/buildkit-observer /usr/bin/buildkit-observer
 COPY --from=builder /out/buildctl-batch /usr/bin/buildctl-batch
 COPY --from=builder /out/grpcurl /usr/bin/grpcurl

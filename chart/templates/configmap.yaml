@@ -12,6 +12,14 @@ data:
     {{- toPrettyJson . | nindent 4 }}
   {{- end }}
   buildkitd.toml: |
+    {{- if .Values.observability.workerMetrics.enabled }}
+    [grpc]
+      debugAddress = "0.0.0.0:{{ .Values.observability.workerMetrics.port }}"
+    {{- end }}
+    {{- if .Values.observability.tracing.enabled }}
+    [log]
+      format = "json"
+    {{- end }}
     {{- $mirrorNamespace := include "buildkit-service.packageMirror.namespace" . }}
     {{- $selectedMirrors := include "buildkit-service.packageMirror.selectedRegistryMirrors" . | fromYamlArray }}
     {{- range $index, $entry := $selectedMirrors }}
@@ -66,6 +74,9 @@ data:
     [worker.oci]
       {{- if hasKey . "gc" }}
       gc = {{ .gc }}
+      {{- end }}
+      {{- with .defaultCgroupParent }}
+      defaultCgroupParent = {{ . | quote }}
       {{- end }}
       {{- with .networkMode }}
       networkMode = {{ . | quote }}

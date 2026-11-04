@@ -2,7 +2,8 @@ BATCH_BINARY  := ./bin/buildctl-batch
 BATCH_PKG     := ./cmd/buildctl-batch
 DAEMON_BINARY := ./bin/buildctl-daemon
 DAEMON_PKG    := ./cmd/buildctl-daemon
-BINARIES      := $(BATCH_BINARY) $(DAEMON_BINARY)
+OBSERVER_BINARY := ./bin/buildkit-observer
+BINARIES      := $(BATCH_BINARY) $(DAEMON_BINARY) $(OBSERVER_BINARY)
 GO            ?= go
 UV            ?= uv
 GOARCH        ?= $(shell $(GO) env GOARCH)
@@ -10,7 +11,7 @@ GOOS          ?= linux
 
 .PHONY: all clean test buildctl-batch buildctl-daemon
 
-all: buildctl-batch buildctl-daemon
+all: buildctl-batch buildctl-daemon buildkit-observer
 
 buildctl-batch:
 	mkdir -p $(dir $(BATCH_BINARY))
@@ -21,6 +22,10 @@ buildctl-daemon:
 	mkdir -p $(dir $(DAEMON_BINARY))
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build -o $(DAEMON_BINARY) $(DAEMON_PKG)
+
+buildkit-observer:
+	mkdir -p $(dir $(OBSERVER_BINARY))
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -o $(OBSERVER_BINARY) ./cmd/buildkit-observer
 
 test:
 	$(GO) test ./...
@@ -66,3 +71,15 @@ dev-status dev-logs dev-down dev-reset:
 
 dev-unit:
 	$(UV) run --locked python -m unittest discover -s tests/dev -p 'test_*.py'
+
+# Optional, isolated local Prometheus/Grafana/OTLP/Tempo/Loki validation.
+export OBS_RUN_DIR
+.PHONY: observability observability-build observability-up observability-test observability-status observability-logs observability-down observability-unit
+observability: setup e2e-setup observability-unit
+	$(UV) run --locked python scripts/observability.py all
+
+observability-build observability-up observability-test observability-status observability-logs observability-down:
+	$(UV) run --locked python scripts/observability.py $(patsubst observability-%,%,$@)
+
+observability-unit:
+	$(UV) run --locked python -m unittest discover -s tests/observability -p 'test_*.py'

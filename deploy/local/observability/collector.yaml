@@ -1,0 +1,275 @@
+{
+  "extensions": {
+    "health_check": {
+      "endpoint": "0.0.0.0:13133"
+    },
+    "file_storage": {
+      "directory": "/var/lib/otelcol/storage",
+      "create_directory": true
+    }
+  },
+  "receivers": {
+    "otlp": {
+      "protocols": {
+        "grpc": {
+          "endpoint": "0.0.0.0:4317"
+        },
+        "http": {
+          "endpoint": "0.0.0.0:4318"
+        }
+      }
+    },
+    "filelog/daemon": {
+      "include": [
+        "/logs/daemon.jsonl"
+      ],
+      "start_at": "beginning",
+      "include_file_name": true,
+      "operators": [
+        {
+          "type": "json_parser",
+          "if": "body matches \"^\\\\{\"",
+          "parse_to": "attributes",
+          "on_error": "send"
+        },
+        {
+          "type": "trace_parser",
+          "if": "attributes.trace_id != nil",
+          "trace_id": {
+            "parse_from": "attributes.trace_id"
+          },
+          "span_id": {
+            "parse_from": "attributes.span_id"
+          },
+          "on_error": "send"
+        }
+      ],
+      "storage": "file_storage"
+    },
+    "filelog/worker1": {
+      "include": [
+        "/logs/worker1.jsonl"
+      ],
+      "start_at": "beginning",
+      "include_file_name": true,
+      "operators": [
+        {
+          "type": "json_parser",
+          "if": "body matches \"^\\\\{\"",
+          "parse_to": "attributes",
+          "on_error": "send"
+        },
+        {
+          "type": "trace_parser",
+          "if": "attributes.trace_id != nil",
+          "trace_id": {
+            "parse_from": "attributes.trace_id"
+          },
+          "span_id": {
+            "parse_from": "attributes.span_id"
+          },
+          "on_error": "send"
+        }
+      ],
+      "storage": "file_storage"
+    },
+    "filelog/worker2": {
+      "include": [
+        "/logs/worker2.jsonl"
+      ],
+      "start_at": "beginning",
+      "include_file_name": true,
+      "operators": [
+        {
+          "type": "json_parser",
+          "if": "body matches \"^\\\\{\"",
+          "parse_to": "attributes",
+          "on_error": "send"
+        },
+        {
+          "type": "trace_parser",
+          "if": "attributes.trace_id != nil",
+          "trace_id": {
+            "parse_from": "attributes.trace_id"
+          },
+          "span_id": {
+            "parse_from": "attributes.span_id"
+          },
+          "on_error": "send"
+        }
+      ],
+      "storage": "file_storage"
+    },
+    "filelog/batch": {
+      "include": [
+        "/logs/batch.jsonl"
+      ],
+      "start_at": "beginning",
+      "include_file_name": true,
+      "operators": [
+        {
+          "type": "json_parser",
+          "if": "body matches \"^\\\\{\"",
+          "parse_to": "attributes",
+          "on_error": "send"
+        },
+        {
+          "type": "trace_parser",
+          "if": "attributes.trace_id != nil",
+          "trace_id": {
+            "parse_from": "attributes.trace_id"
+          },
+          "span_id": {
+            "parse_from": "attributes.span_id"
+          },
+          "on_error": "send"
+        }
+      ],
+      "storage": "file_storage"
+    }
+  },
+  "processors": {
+    "memory_limiter": {
+      "check_interval": "1s",
+      "limit_mib": 128
+    },
+    "batch": {
+      "timeout": "1s"
+    },
+    "resource/daemon": {
+      "attributes": [
+        {
+          "key": "service.name",
+          "value": "buildctl-daemon",
+          "action": "upsert"
+        }
+      ]
+    },
+    "resource/worker1": {
+      "attributes": [
+        {
+          "key": "service.name",
+          "value": "buildkit-worker1",
+          "action": "upsert"
+        }
+      ]
+    },
+    "resource/worker2": {
+      "attributes": [
+        {
+          "key": "service.name",
+          "value": "buildkit-worker2",
+          "action": "upsert"
+        }
+      ]
+    },
+    "resource/batch": {
+      "attributes": [
+        {
+          "key": "service.name",
+          "value": "buildctl-batch",
+          "action": "upsert"
+        }
+      ]
+    }
+  },
+  "exporters": {
+    "otlp/tempo": {
+      "endpoint": "tempo:4317",
+      "tls": {
+        "insecure": true
+      }
+    },
+    "otlphttp/loki": {
+      "endpoint": "http://loki:3100/otlp"
+    }
+  },
+  "service": {
+    "extensions": [
+      "health_check",
+      "file_storage"
+    ],
+    "pipelines": {
+      "traces": {
+        "receivers": [
+          "otlp"
+        ],
+        "processors": [
+          "memory_limiter",
+          "batch"
+        ],
+        "exporters": [
+          "otlp/tempo"
+        ]
+      },
+      "logs/daemon": {
+        "receivers": [
+          "filelog/daemon"
+        ],
+        "processors": [
+          "memory_limiter",
+          "resource/daemon",
+          "batch"
+        ],
+        "exporters": [
+          "otlphttp/loki"
+        ]
+      },
+      "logs/worker1": {
+        "receivers": [
+          "filelog/worker1"
+        ],
+        "processors": [
+          "memory_limiter",
+          "resource/worker1",
+          "batch"
+        ],
+        "exporters": [
+          "otlphttp/loki"
+        ]
+      },
+      "logs/worker2": {
+        "receivers": [
+          "filelog/worker2"
+        ],
+        "processors": [
+          "memory_limiter",
+          "resource/worker2",
+          "batch"
+        ],
+        "exporters": [
+          "otlphttp/loki"
+        ]
+      },
+      "logs/batch": {
+        "receivers": [
+          "filelog/batch"
+        ],
+        "processors": [
+          "memory_limiter",
+          "resource/batch",
+          "batch"
+        ],
+        "exporters": [
+          "otlphttp/loki"
+        ]
+      }
+    },
+    "telemetry": {
+      "metrics": {
+        "readers": [
+          {
+            "pull": {
+              "exporter": {
+                "prometheus": {
+                  "host": "0.0.0.0",
+                  "port": 8888
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

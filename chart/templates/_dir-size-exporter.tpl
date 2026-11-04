@@ -108,14 +108,30 @@ def used_bytes(path):
     cached = _CACHE.get(path)
     if cached and now - cached[0] < TTL:
         return cached[1]
-    total = 0
-    for root, _dirs, names in os.walk(path):
+    total = allocated = 0
+    seen = set()
+    errors = []
+    def on_error(error):
+        errors.append(error)
+    for root, _dirs, names in os.walk(path, onerror=on_error):
         for n in names:
             try:
-                total += os.lstat(os.path.join(root, n)).st_size
-            except OSError:
-                pass
-    _CACHE[path] = (now, total)
+                st = os.lstat(os.path.join(root, n))
+                if st.st_nlink > 1:
+                    key = (st.st_dev, st.st_ino)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                total += st.st_size
+                allocated += getattr(st, "st_blocks", 0) * 512
+            except FileNotFoundError:
+                # Cache GC may remove an entry while it is scanned.
+                continue
+            except OSError as error:
+                errors.append(error)
+    if errors:
+        raise OSError("cache scan incomplete")
+    _CACHE[path] = (time.time(), total, allocated, time.time())
     return total
 
 
@@ -129,16 +145,44 @@ def total_bytes(path):
 
 def render():
     out = []
-    out.append("# HELP %s_cache_used_bytes Used bytes under the watched directory." % PREFIX)
-    out.append("# TYPE %s_cache_used_bytes gauge" % PREFIX)
-    out.append("# HELP %s_cache_total_bytes Total capacity of the filesystem backing the directory." % PREFIX)
-    out.append("# TYPE %s_cache_total_bytes gauge" % PREFIX)
+    descriptions = {
+        "cache_used_bytes": "Logical file bytes under the watched directory, deduplicated by inode.",
+        "cache_allocated_bytes": "Allocated file blocks under the watched directory, deduplicated by inode.",
+        "cache_total_bytes": "Capacity of the backing filesystem; NOT a cache budget or per-pod quota.",
+        "filesystem_available_bytes": "Backing filesystem bytes available to this process.",
+        "filesystem_free_inodes": "Free inodes on the backing filesystem.",
+        "cache_scan_success": "Whether the latest requested directory scan completed successfully.",
+        "cache_scan_timestamp_seconds": "Unix timestamp of the last successful directory scan.",
+        "cache_scan_duration_seconds": "Duration of the latest scan or cached lookup.",
+        "cache_limit_bytes": "Explicit configured cache volume budget; absent when unknown.",
+    }
+    for name, help_text in descriptions.items():
+        out.extend(["# HELP %s_%s %s" % (PREFIX, name, help_text), "# TYPE %s_%s gauge" % (PREFIX, name)])
     for label, path in TARGETS:
-        is_dir = os.path.isdir(path)
-        used = used_bytes(path) if is_dir else 0
-        total = total_bytes(path) if is_dir else 0
-        out.append('%s_cache_used_bytes{target="%s"} %d' % (PREFIX, label, used))
-        out.append('%s_cache_total_bytes{target="%s"} %d' % (PREFIX, label, total))
+        values = {}
+        started = time.monotonic()
+        try:
+            if not os.path.isdir(path):
+                raise FileNotFoundError(path)
+            values["cache_used_bytes"] = used_bytes(path)
+            cached = _CACHE[path]
+            values["cache_allocated_bytes"] = cached[2]
+            values["cache_scan_timestamp_seconds"] = cached[3]
+            st = os.statvfs(path)
+            values["cache_total_bytes"] = st.f_blocks * st.f_frsize
+            values["filesystem_available_bytes"] = st.f_bavail * st.f_frsize
+            values["filesystem_free_inodes"] = st.f_favail
+            values["cache_scan_success"] = 1
+        except OSError:
+            # Unknown data is never represented as an empty, healthy cache.
+            values = {"cache_scan_success": 0}
+        values["cache_scan_duration_seconds"] = time.monotonic() - started
+        limit = os.environ.get("CACHE_LIMIT_BYTES", "0")
+        if int(limit) > 0:
+            values["cache_limit_bytes"] = int(limit)
+        safe_label = label.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        for name, value in values.items():
+            out.append('%s_%s{target="%s"} %s' % (PREFIX, name, safe_label, value))
     return "\n".join(out) + "\n"
 
 

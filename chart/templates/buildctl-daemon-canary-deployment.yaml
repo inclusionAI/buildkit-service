@@ -98,6 +98,10 @@ spec:
             - {{ $cfg.registryCheckConcurrency | int | quote }}
             - --rlimit-nofile
             - {{ $cfg.rlimitNoFile | int | quote }}
+          {{- if .Values.observability.tracing.enabled }}
+          env:
+            {{- include "buildkit-service.telemetryEnv" (dict "root" . "service" "buildctl-daemon-canary") | nindent 12 }}
+          {{- end }}
           image: {{ $image }}
           imagePullPolicy: {{ $cfg.imagePullPolicy }}
           livenessProbe:
@@ -129,6 +133,11 @@ spec:
           terminationMessagePath: {{ .Values.terminationMessagePath }}
           terminationMessagePolicy: {{ .Values.terminationMessagePolicy }}
           volumeMounts:
+            {{- if .Values.observability.tracing.caSecretName }}
+            - name: otel-ca
+              mountPath: /var/run/secrets/otel
+              readOnly: true
+            {{- end }}
             - name: daemon-token
               mountPath: /var/run/secrets/buildctl-daemon
               readOnly: true
@@ -158,6 +167,11 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+        {{- if .Values.observability.tracing.caSecretName }}
+        - name: otel-ca
+          secret:
+            secretName: {{ .Values.observability.tracing.caSecretName }}
+        {{- end }}
         - name: daemon-token
           secret:
             secretName: {{ $tokenSecretName }}

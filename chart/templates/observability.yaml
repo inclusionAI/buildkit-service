@@ -1,0 +1,138 @@
+{{- if .Values.observability.podMonitor.enabled }}
+{{- $root := . }}
+{{- $components := list }}
+{{- if and .Values.buildkit.enabled .Values.observability.workerMetrics.enabled }}
+{{- $components = append $components (dict "name" "worker" "component" "buildkitd" "port" "worker-metrics") }}
+{{- end }}
+{{- if and .Values.buildkit.enabled .Values.observability.workerState.enabled }}
+{{- $components = append $components (dict "name" "worker-state" "component" "buildkitd" "port" "worker-state") }}
+{{- end }}
+{{- if and .Values.buildkit.enabled .Values.buildkitdCacheMetrics.enabled }}
+{{- $components = append $components (dict "name" "cache" "component" "buildkitd" "port" .Values.buildkitdCacheMetrics.portName) }}
+{{- end }}
+{{- if and .Values.buildkit.enabled .Values.buildctlDaemon.enabled }}
+{{- $components = append $components (dict "name" "daemon" "component" "buildctl-daemon" "port" .Values.buildctlDaemon.container.portName) }}
+{{- end }}
+{{- range $components }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "buildkit-service.fullname" $root }}-{{ .name }}
+  namespace: {{ include "buildkit-service.namespace" $root }}
+  labels:
+    {{- include "buildkit-service.labels" $root | nindent 4 }}
+    {{- with $root.Values.observability.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ include "buildkit-service.namespace" $root | quote }}]
+  selector:
+    matchLabels:
+      {{- include "buildkit-service.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ .component }}
+  podMetricsEndpoints:
+    - port: {{ .port }}
+      interval: {{ $root.Values.observability.podMonitor.interval }}
+      scrapeTimeout: {{ $root.Values.observability.podMonitor.scrapeTimeout }}
+      relabelings:
+        - targetLabel: buildkit_component
+          replacement: {{ .name }}
+{{- end }}
+{{- end }}
+{{- if and .Values.observability.podMonitor.enabled .Values.packageMirror.enabled }}
+{{- $root := . }}
+{{- $mirrors := list }}
+{{- if .Values.packageMirror.metrics.enabled }}
+{{- $mirrors = append $mirrors (dict "name" "packages" "selector" "buildkit-service.packageMirror.selectorLabels" "port" .Values.packageMirror.metrics.portName) }}
+{{- end }}
+{{- if and .Values.packageMirror.maven.enabled .Values.packageMirror.maven.cacheMetrics.enabled }}
+{{- $mirrors = append $mirrors (dict "name" "maven" "selector" "buildkit-service.packageMirror.mavenSelectorLabels" "port" .Values.packageMirror.maven.cacheMetrics.portName) }}
+{{- end }}
+{{- range $mirrors }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "buildkit-service.fullname" $root }}-{{ .name }}
+  namespace: {{ include "buildkit-service.namespace" $root }}
+  labels:
+    {{- with $root.Values.observability.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ include "buildkit-service.packageMirror.namespace" $root | quote }}]
+  selector:
+    matchLabels:
+      {{- include .selector $root | nindent 6 }}
+  podMetricsEndpoints:
+    - port: {{ .port }}
+      interval: {{ $root.Values.observability.podMonitor.interval }}
+      scrapeTimeout: {{ $root.Values.observability.podMonitor.scrapeTimeout }}
+      relabelings:
+        - targetLabel: buildkit_component
+          replacement: {{ .name }}
+{{- end }}
+{{- range include "buildkit-service.packageMirror.selectedRegistryMirrors" . | fromYamlArray }}
+{{- if .enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "buildkit-service.fullname" $root }}-{{ .serviceName }}
+  namespace: {{ include "buildkit-service.namespace" $root }}
+  labels:
+    {{- with $root.Values.observability.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ include "buildkit-service.packageMirror.namespace" $root | quote }}]
+  selector:
+    matchLabels:
+      {{- include "buildkit-service.packageMirror.registrySelectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ .serviceName }}
+  podMetricsEndpoints:
+    - port: {{ .debugPortName | default "debug" }}
+      interval: {{ $root.Values.observability.podMonitor.interval }}
+      scrapeTimeout: {{ $root.Values.observability.podMonitor.scrapeTimeout }}
+    {{- if $root.Values.packageMirror.registry.cacheMetrics.enabled }}
+    - port: {{ $root.Values.packageMirror.registry.cacheMetrics.portName }}
+      interval: {{ $root.Values.observability.podMonitor.interval }}
+      scrapeTimeout: {{ $root.Values.observability.podMonitor.scrapeTimeout }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.observability.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "buildkit-service.fullname" . }}
+  namespace: {{ include "buildkit-service.namespace" . }}
+  labels:
+    {{- include "buildkit-service.labels" . | nindent 4 }}
+    {{- with .Values.observability.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- .Files.Get "observability/alerts.yaml" | nindent 2 }}
+{{- end }}
+{{- if .Values.observability.dashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "buildkit-service.fullname" . }}-dashboard
+  namespace: {{ include "buildkit-service.namespace" . }}
+  labels:
+    {{- with .Values.observability.dashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  buildkit-service.json: |
+    {{- .Files.Get "observability/dashboard.json" | nindent 4 }}
+{{- end }}

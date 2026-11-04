@@ -1,0 +1,111 @@
+{
+  "global": {
+    "scrape_interval": "2s",
+    "evaluation_interval": "2s"
+  },
+  "rule_files": [
+    "/etc/prometheus/alerts.yaml"
+  ],
+  "alerting": {
+    "alertmanagers": [
+      {
+        "static_configs": [
+          {
+            "targets": [
+              "alertmanager:9093"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scrape_configs": [
+    {
+      "job_name": "buildkit-worker",
+      "static_configs": [
+        {
+          "targets": [
+            "worker1:6060",
+            "worker2:6060"
+          ],
+          "labels": {
+            "buildkit_component": "worker"
+          }
+        }
+      ]
+    },
+    {
+      "job_name": "buildkit-cache",
+      "static_configs": [
+        {
+          "targets": [
+            "cache1:9300",
+            "cache2:9300"
+          ],
+          "labels": {
+            "buildkit_component": "cache"
+          }
+        }
+      ]
+    },
+    {
+      "job_name": "buildctl-daemon",
+      "static_configs": [
+        {
+          "targets": [
+            "daemon:8080"
+          ],
+          "labels": {
+            "buildkit_component": "daemon"
+          }
+        }
+      ]
+    },
+    {
+      "job_name": "cadvisor",
+      "static_configs": [
+        {
+          "targets": [
+            "cadvisor:8080"
+          ]
+        }
+      ],
+      "metric_relabel_configs": [
+        {
+          "source_labels": [
+            "container_label_com_docker_compose_project"
+          ],
+          "regex": "${OBS_PROJECT}",
+          "action": "keep"
+        }
+      ]
+    },
+    {
+      "job_name": "otel-collector",
+      "static_configs": [
+        {
+          "targets": [
+            "collector:8888"
+          ],
+          "labels": {
+            "buildkit_component": "collector"
+          }
+        }
+      ]
+    },
+    {
+      "job_name": "buildkit-worker-state",
+      "static_configs": [
+        {
+          "targets": [
+            "observer1:9301",
+            "observer2:9301"
+          ],
+          "labels": {
+            "buildkit_component": "worker-state"
+          }
+        }
+      ]
+    }
+  ]
+}

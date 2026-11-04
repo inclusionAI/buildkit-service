@@ -18,6 +18,7 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	digest "github.com/opencontainers/go-digest"
+	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -295,6 +296,7 @@ func (r *realBuildRunner) clientForAddr(ctx context.Context, addr string) (*buil
 		}
 	}
 
+	opts = append(opts, buildkit.WithTracerProvider(otel.GetTracerProvider()))
 	c, err := buildkit.New(ctx, addr, opts...)
 	if err != nil {
 		return nil, err

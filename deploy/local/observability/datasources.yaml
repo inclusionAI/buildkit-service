@@ -1,0 +1,47 @@
+{
+  "apiVersion": 1,
+  "datasources": [
+    {
+      "name": "Prometheus",
+      "uid": "prometheus",
+      "type": "prometheus",
+      "access": "proxy",
+      "url": "http://prometheus:9090",
+      "isDefault": true,
+      "jsonData": {
+        "timeInterval": "2s"
+      }
+    },
+    {
+      "name": "Tempo",
+      "uid": "tempo",
+      "type": "tempo",
+      "access": "proxy",
+      "url": "http://tempo:3200",
+      "jsonData": {
+        "tracesToLogsV2": {
+          "datasourceUid": "loki",
+          "tags": [{"key": "service.name", "value": "service_name"}],
+          "filterByTraceID": true
+        }
+      }
+    },
+    {
+      "name": "Loki",
+      "uid": "loki",
+      "type": "loki",
+      "access": "proxy",
+      "url": "http://loki:3100",
+      "jsonData": {
+        "derivedFields": [
+          {
+            "datasourceUid": "tempo",
+            "matcherRegex": "\"trace_id\"\\s*:\\s*\"([0-9a-f]{32})\"",
+            "name": "TraceID",
+            "url": "$${__value.raw}"
+          }
+        ]
+      }
+    }
+  ]
+}

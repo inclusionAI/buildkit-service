@@ -73,6 +73,19 @@ spec:
             - --config
             - {{ .Values.buildkitdConfig.path | quote }}
             {{- end }}
+            {{- if not .Values.buildkitdConfig.enabled }}
+            {{- if .Values.observability.workerMetrics.enabled }}
+            - --debugaddr
+            - {{ printf "0.0.0.0:%v" .Values.observability.workerMetrics.port | quote }}
+            {{- end }}
+            {{- if .Values.observability.tracing.enabled }}
+            - --log-format=json
+            {{- end }}
+            {{- end }}
+          {{- if .Values.observability.tracing.enabled }}
+          env:
+            {{- include "buildkit-service.telemetryEnv" (dict "root" . "service" "buildkitd") | nindent 12 }}
+          {{- end }}
           image: {{ include "buildkit-service.image" . }}
           imagePullPolicy: {{ include "buildkit-service.imagePullPolicy" . }}
           {{- if .Values.container.startupProbe.enabled }}
@@ -94,6 +107,10 @@ spec:
               port: {{ .Values.container.portName }}
             timeoutSeconds: {{ .Values.container.livenessProbe.timeoutSeconds }}
           ports:
+            {{- if .Values.observability.workerMetrics.enabled }}
+            - name: worker-metrics
+              containerPort: {{ .Values.observability.workerMetrics.port }}
+            {{- end }}
             - containerPort: {{ .Values.container.port }}
               name: {{ .Values.container.portName }}
               protocol: {{ .Values.container.protocol }}
@@ -112,6 +129,11 @@ spec:
           terminationMessagePath: {{ .Values.terminationMessagePath }}
           terminationMessagePolicy: {{ .Values.terminationMessagePolicy }}
           volumeMounts:
+            {{- if .Values.observability.tracing.caSecretName }}
+            - name: otel-ca
+              mountPath: /var/run/secrets/otel
+              readOnly: true
+            {{- end }}
             {{- toYaml .Values.volumeMounts | nindent 12 }}
             {{- if .Values.buildkitdConfig.enabled }}
             - name: buildkitd-config
@@ -127,10 +149,35 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+        {{- if .Values.observability.workerState.enabled }}
+        - name: worker-state
+          image: {{ .Values.observability.workerState.image | default (include "buildkit-service.image" .) }}
+          imagePullPolicy: {{ include "buildkit-service.imagePullPolicy" . }}
+          command: ["buildkit-observer"]
+          args:
+            - --addr=tcp://127.0.0.1:{{ .Values.container.port }}
+            - --listen=:{{ .Values.observability.workerState.port }}
+            - --interval={{ .Values.observability.workerState.interval }}
+            - --timeout={{ .Values.observability.workerState.timeout }}
+            {{- if .Values.observability.workerState.tlsSecretName }}
+            - --tlsdir=/var/run/secrets/worker-state-tls
+            - --tlsservername={{ .Values.observability.workerState.tlsServerName }}
+            {{- end }}
+          ports:
+            - name: worker-state
+              containerPort: {{ .Values.observability.workerState.port }}
+          resources:
+            {{- toYaml .Values.observability.workerState.resources | nindent 12 }}
+          {{- if .Values.observability.workerState.tlsSecretName }}
+          volumeMounts:
+            - name: worker-state-tls
+              mountPath: /var/run/secrets/worker-state-tls
+              readOnly: true
+          {{- end }}
+        {{- end }}
         {{- if .Values.buildkitdCacheMetrics.enabled }}
         # Cache-usage exporter: reports buildkitd cache used/total bytes from the
-        # lib-buildkit volume. buildkitd itself exposes no cumulative build or
-        # cache metrics in this fork, so cache size is measured from disk.
+        # lib-buildkit volume, alongside native BuildKit build metrics.
         - name: cache-metrics
           image: {{ printf "%s:%s" .Values.buildkitdCacheMetrics.image.repository .Values.buildkitdCacheMetrics.image.tag }}
           imagePullPolicy: {{ .Values.buildkitdCacheMetrics.image.pullPolicy }}
@@ -144,6 +191,8 @@ spec:
               value: buildkit_service
             - name: TARGETS
               value: {{ printf "buildkit=%s" .Values.buildkitdCacheMetrics.cacheDir | quote }}
+            - name: CACHE_LIMIT_BYTES
+              value: {{ .Values.buildkitdCacheMetrics.cacheLimitBytes | int64 | quote }}
             - name: DIR_STATS_TTL_SECONDS
               value: {{ .Values.buildkitdCacheMetrics.dirStatsTtlSeconds | quote }}
           ports:
@@ -195,6 +244,16 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+        {{- if and .Values.observability.workerState.enabled .Values.observability.workerState.tlsSecretName }}
+        - name: worker-state-tls
+          secret:
+            secretName: {{ .Values.observability.workerState.tlsSecretName }}
+        {{- end }}
+        {{- if .Values.observability.tracing.caSecretName }}
+        - name: otel-ca
+          secret:
+            secretName: {{ .Values.observability.tracing.caSecretName }}
+        {{- end }}
         {{- toYaml .Values.volumes | nindent 8 }}
         {{- if .Values.buildkitdConfig.enabled }}
         - name: buildkitd-config

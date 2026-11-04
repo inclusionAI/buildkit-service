@@ -64,6 +64,14 @@ func Run(ctx context.Context, cfg Config) error {
 		},
 		globalSem: newGlobalSem(cfg.MaxConcurrency),
 	}
+	defer func() {
+		for _, task := range server.store.list() {
+			if task.Status == buildStatusQueued || task.Status == buildStatusRunning {
+				server.store.cancel(task.ID)
+				server.finishTask(task.ID, buildStatusCanceled, nil, context.Canceled)
+			}
+		}
+	}()
 	server.scheduler, err = newBuildModeScheduler(modes, server.runBuildTask)
 	if err != nil {
 		return err

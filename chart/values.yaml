@@ -94,6 +94,8 @@ buildkitdConfig:
       cniConfigPath: /etc/buildkit/cni.json
       cniBinaryPath: /usr/lib/cni
       cniPoolSize: 16
+      # Optional executor cgroup parent; validate resource attribution before setting.
+      defaultCgroupParent: ""
       # gckeepstorage is the default BuildKit GC storage target in MB. Keep it
       # well below volumes[].lib-buildkit.emptyDir.sizeLimit so short bursts do
       # not make kubelet evict buildkitd before BuildKit GC can prune cache.
@@ -111,7 +113,7 @@ buildkitdConfig:
           keepBytes: 429496729600 # 400GiB
 
 # Cache-usage exporter sidecar for each buildkitd pod. buildkitd in this fork
-# exposes no cumulative build/cache metrics, so cache size is measured directly
+# supplies storage gauges alongside native BuildKit build metrics. Size is measured directly
 # from the lib-buildkit volume and surfaced via a headless metrics Service that
 # the metrics-aggregator scrapes per pod.
 buildkitdCacheMetrics:
@@ -126,6 +128,8 @@ buildkitdCacheMetrics:
   # Directory measured for used bytes; total bytes comes from its filesystem.
   cacheDir: /var/lib/buildkit
   dirStatsTtlSeconds: 60
+  # Explicit cache budget in bytes; zero omits the budget metric (unknown).
+  cacheLimitBytes: 0
   resources:
     limits:
       cpu: "250m"
@@ -1272,3 +1276,44 @@ packageMirror:
   podLabels: {}
   podSecurityContext: {}
   securityContext: {}
+
+# Observability backends are deployed separately. All integrations are opt-in.
+observability:
+  workerState:
+    enabled: false
+    image: ""
+    port: 9301
+    interval: 30s
+    timeout: 5s
+    tlsSecretName: ""
+    tlsServerName: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  workerMetrics:
+    enabled: false
+    port: 6060
+  tracing:
+    enabled: false
+    endpoint: ""
+    protocol: grpc
+    sampler: parentbased_traceidratio
+    samplerArg: "0.1"
+    headersSecretName: ""
+    caSecretName: ""
+  podMonitor:
+    enabled: false
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+  prometheusRule:
+    enabled: false
+    labels: {}
+  dashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
