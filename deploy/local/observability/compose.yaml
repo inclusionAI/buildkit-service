@@ -266,7 +266,7 @@
       "user": "0:0",
       "environment": {
         "GF_AUTH_ANONYMOUS_ENABLED": "true",
-        "GF_AUTH_ANONYMOUS_ORG_ROLE": "Viewer",
+        "GF_AUTH_ANONYMOUS_ORG_ROLE": "Editor",
         "GF_ANALYTICS_REPORTING_ENABLED": "false",
         "GF_ANALYTICS_CHECK_FOR_UPDATES": "false"
       },
