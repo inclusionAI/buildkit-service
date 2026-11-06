@@ -22,6 +22,13 @@ groups:
           severity: warning
         annotations:
           summary: A worker cache exceeds 80 percent of its explicit budget
+      - alert: BuildKitCacheSampleStale
+        expr: time() - buildkit_service_cache_scan_timestamp_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The last successful cache directory scan is over ten minutes old
       - alert: BuildKitFilesystemLow
         expr: buildkit_service_filesystem_available_bytes < 10737418240
         for: 5m

@@ -1,7 +1,9 @@
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
+import urllib.request
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -23,6 +25,7 @@ class ExporterTests(unittest.TestCase):
             with path.open('wb') as f:f.truncate(1<<20)
             os.link(path,Path(directory)/'hardlink')
             exporter['TARGETS']=[('buildkit',directory)]
+            exporter['scan'](directory)
             with patch.dict(os.environ,{'CACHE_LIMIT_BYTES':'33554432'}):text=exporter['render']()
             self.assertIn('cache_used_bytes{target="buildkit"} 1048576',text)
             self.assertIn('cache_limit_bytes{target="buildkit"} 33554432',text)
@@ -33,6 +36,7 @@ class ExporterTests(unittest.TestCase):
     def test_missing_directory_is_unknown_not_empty(self):
         exporter=script('buildkit-service.dirSizeExporterScript','_dir-size-exporter.tpl')
         exporter['TARGETS']=[('missing','/path/that/does/not/exist')]
+        exporter['scan']('/path/that/does/not/exist')
         text=exporter['render']()
         self.assertIn('cache_scan_success{target="missing"} 0',text)
         self.assertNotIn('cache_used_bytes{target=',text)
@@ -44,9 +48,58 @@ class ExporterTests(unittest.TestCase):
             def denied(path,onerror=None):
                 onerror(PermissionError('denied'))
                 return iter([])
-            with patch.object(exporter['os'],'walk',side_effect=denied):text=exporter['render']()
+            with patch.object(exporter['os'],'walk',side_effect=denied):
+                exporter['scan'](directory)
+                text=exporter['render']()
             self.assertIn('cache_scan_success{target="cache"} 0',text)
             self.assertNotIn('cache_used_bytes{target=',text)
+
+    def test_slow_scan_does_not_block_http_or_overlap(self):
+        exporter=script('buildkit-service.dirSizeExporterScript','_dir-size-exporter.tpl')
+        entered=threading.Event();release=threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            exporter['TARGETS']=[('cache',directory),('same-volume',directory)]
+            def slow_walk(*args,**kwargs):
+                entered.set()
+                if not release.wait(5):raise TimeoutError('test did not release scan')
+                return iter([])
+            server=exporter['ThreadingHTTPServer'](('127.0.0.1',0),exporter['Handler'])
+            serving=threading.Thread(target=server.serve_forever,daemon=True)
+            serving.start()
+            try:
+                with patch.object(exporter['os'],'walk',side_effect=slow_walk) as walk:
+                    stop,threads=exporter['start_scanners']()
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                        for _ in range(3):
+                            with opener.open('http://127.0.0.1:%d/metrics'%server.server_port,timeout=2) as response:
+                                text=response.read().decode()
+                            self.assertIn('cache_scan_in_progress{target="cache"} 1',text)
+                            self.assertIn('cache_scan_success{target="cache"} 0',text)
+                            self.assertNotIn('cache_used_bytes{target=',text)
+                            self.assertIn('filesystem_available_bytes',text)
+                        self.assertEqual(walk.call_count,1)
+                        self.assertEqual(len(threads),1)
+                    finally:
+                        stop.set();release.set()
+                        for thread in threads:thread.join(2)
+                    self.assertIn('cache_scan_success{target="cache"} 1',exporter['render']())
+            finally:
+                server.shutdown();server.server_close();serving.join(2)
+
+    def test_failed_rescan_keeps_age_but_omits_usage(self):
+        exporter=script('buildkit-service.dirSizeExporterScript','_dir-size-exporter.tpl')
+        with tempfile.TemporaryDirectory() as directory:
+            exporter['TARGETS']=[('cache',directory)]
+            exporter['scan'](directory)
+            timestamp=exporter['_CACHE'][directory]['timestamp']
+            with patch.object(exporter['os'],'walk',side_effect=PermissionError('denied')):
+                exporter['scan'](directory)
+            text=exporter['render']()
+            self.assertIn('cache_scan_success{target="cache"} 0',text)
+            self.assertNotIn('cache_used_bytes{target=',text)
+            self.assertEqual(exporter['_CACHE'][directory]['timestamp'],timestamp)
 
     def test_partial_scrape_is_not_healthy(self):
         aggregator=script('buildkit-service.metricsAggregatorScript','_metrics-aggregator.tpl')
