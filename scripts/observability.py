@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Isolated local observability stack, source builds and backend assertions."""
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import io
@@ -276,6 +277,36 @@ class Stack:
         require(response.get('status')=='success','Prometheus query failed')
         return response['data']['result']
 
+    def resolved_workers(self):
+        workers={}
+        for name in ('worker1','worker2'):
+            info=json.loads(self.docker('inspect',self.state['containers'][name]['id']))[0]
+            network=info['NetworkSettings']['Networks'][self.state['name']+'_default']
+            workers[network['IPAddress']]=name
+        # DNS can initially return a hostname fallback for just one worker.
+        # Slot order changes once both addresses resolve, even for the same key.
+        expected={'tcp://'+ip+':9094' for ip in workers}
+        eventually(lambda:{r['metric']['worker'] for r in self.query('buildctl_daemon_worker_slots_capacity')}==expected)
+        return workers
+
+    @contextmanager
+    def worker_network_outage(self, worker):
+        require(worker in ('worker1','worker2'),'Unknown validation worker')
+        self.assert_owned()
+        container=self.state['containers'][worker]['id']
+        info=json.loads(self.docker('inspect',container))[0]
+        require(info['HostConfig']['NetworkMode']==self.state['name']+'_default',
+                'Worker fault injection requires the owned private network namespace')
+        rule=('INPUT','-p','tcp','-m','multiport','--dports','6060,9094',
+              '-m','comment','--comment','buildkit-observability-failover','-j','REJECT','--reject-with','tcp-reset')
+        # Keep discovery stable while making the selected worker unreachable.
+        # These rules belong to this worker container's network namespace only.
+        self.docker('exec',container,'iptables','-w','5','-I',*rule,label='block-worker-ports')
+        try:
+            yield
+        finally:
+            self.docker('exec',container,'iptables','-w','5','-D',*rule,label='restore-worker-ports')
+
     def test(self):
         self.assert_owned();self.capture()
         results=[]
@@ -372,19 +403,18 @@ class Stack:
             eventually(lambda:self.query('buildctl_daemon_builds_canceled_total == '+str(before_value+1)))
             eventually(lambda:self.query('buildctl_daemon_queue_wait_seconds_count >= 1'))
             passed('queue-watermarks-and-idempotent-queued-cancellation')
-            worker=None
-            for name in ('worker1','worker2'):
-                info=json.loads(self.docker('inspect',self.state['containers'][name]['id']))[0]
-                ips={v.get('IPAddress') for v in info['NetworkSettings']['Networks'].values()}
-                if success.get('node_ip') in ips:worker=name
-            require(worker,'Could not identify the first build worker')
-            self.compose('stop',worker,timeout=30,label='stop-worker')
-            try:
+            workers=self.resolved_workers()
+            preferred=self.terminal(self.submit(source,{'marker.txt':marker},trace_id=uuid.uuid4().hex))
+            worker=workers.get(preferred.get('node_ip'))
+            require(worker,'Could not identify the current preferred build worker')
+            before=self.query('buildctl_daemon_retries_total{reason="worker_failover"}')
+            retries_before=float(before[0]['value'][1]) if before else 0
+            with self.worker_network_outage(worker):
                 eventually(lambda:self.query(f'up{{job="buildkit-worker",instance="{worker}:6060"}} == 0'))
-                # Identical source prefers the previous worker and exercises failover.
+                # Identical source and unchanged discovery must attempt this worker.
                 recovered=self.terminal(self.submit(source,{'marker.txt':marker},trace_id=uuid.uuid4().hex))
-                require(recovered.get('node_ip')!=success.get('node_ip'),'Build did not move away from stopped worker')
-                eventually(lambda:self.query('buildctl_daemon_retries_total{reason="worker_failover"} >= 1'))
+                require(recovered.get('node_ip')!=preferred.get('node_ip'),'Build did not move away from unreachable worker')
+                eventually(lambda:self.query('buildctl_daemon_retries_total{reason="worker_failover"} >= '+str(retries_before+1)))
                 passed('worker-outage-per-target-health-and-real-build-failover')
                 print('Waiting for the production two-minute target-down alert',flush=True)
                 def firing():
@@ -396,8 +426,6 @@ class Stack:
                     return any(a['labels'].get('alertname')=='BuildKitTargetDown' and a['labels'].get('instance')==worker+':6060' for a in alerts)
                 eventually(delivered)
                 passed('real-alert-firing-and-Alertmanager-delivery')
-            finally:
-                self.compose('start',worker,timeout=30,label='restore-worker')
             eventually(lambda:len(self.query('up{job="buildkit-worker"} == 1'))==2)
             def alert_resolved():
                 alerts=get_json(self.state['endpoints']['prometheus']+'/api/v1/alerts')['data']['alerts']
