@@ -30,10 +30,12 @@ Do not divide cache file size by a summed filesystem capacity to infer worker sa
 | `buildkit_service_cache_limit_bytes` | Explicit configured budget, omitted when unknown; exporting it does not enforce a quota |
 | `buildkit_service_filesystem_available_bytes` | Actual space available on the backing filesystem |
 | `buildkit_service_filesystem_free_inodes` | Available inode count |
-| `buildkit_service_cache_scan_success` | Whether the latest requested scan completed successfully |
+| `buildkit_service_cache_scan_success` | Whether the latest completed background scan succeeded; zero before the first success |
 | `buildkit_service_cache_scan_timestamp_seconds` | Time of the latest successful directory scan |
+| `buildkit_service_cache_scan_in_progress` | Whether a background directory scan is running |
+| `buildkit_service_cache_scan_duration_seconds` | Duration of the latest completed scan |
 
-Missing directories and incomplete scans produce an unhealthy measurement instead of a healthy empty cache. Directory scans are cached; choose their interval and CPU/memory budget for the real cache size. Use filesystem space/inodes and Kubernetes eviction/pressure metrics alongside API cache accounting. Do not sum shared filesystem capacity across Pods.
+Missing directories and incomplete scans produce an unhealthy measurement instead of a healthy empty cache. One background sampler per distinct directory scans at startup and waits `dirStatsTtlSeconds` after each completion before scanning again. HTTP scrapes only read the latest snapshot and filesystem metadata, so a large cache scan cannot block `/metrics` or trigger overlapping walks. Usage is omitted until a successful scan and after a failed scan; the last successful timestamp remains available for freshness checks. During a rescan, the previous successful snapshot remains visible with `cache_scan_in_progress=1`. Choose the interval and CPU/memory budget for the real cache size, and evaluate scan success and age alongside usage. Use filesystem space/inodes and Kubernetes eviction/pressure metrics alongside API cache accounting. Do not sum shared filesystem capacity across Pods.
 
 The legacy Python aggregator remains available for existing consumers, with expected/successful target counts and unhealthy status for partial failures. Use direct per-Pod discovery for new monitoring; do not route fleet counters through a load-balanced ClusterIP or discard worker identity before computing rates. Compute per-instance `rate()` before summing counters so worker restarts are handled independently.
 

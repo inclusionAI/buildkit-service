@@ -75,6 +75,7 @@ Params:
 #!/usr/bin/env python3
 """Generic directory-size metrics exporter (stdlib only)."""
 import os
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -83,6 +84,8 @@ PREFIX = os.environ.get("METRIC_PREFIX", "dir")
 TTL = float(os.environ.get("DIR_STATS_TTL_SECONDS", "60"))
 
 _CACHE = {}
+_LOCK = threading.Lock()
+_SCANNING = set()
 
 
 def parse_targets():
@@ -104,10 +107,6 @@ TARGETS = parse_targets()
 
 
 def used_bytes(path):
-    now = time.time()
-    cached = _CACHE.get(path)
-    if cached and now - cached[0] < TTL:
-        return cached[1]
     total = allocated = 0
     seen = set()
     errors = []
@@ -131,8 +130,50 @@ def used_bytes(path):
                 errors.append(error)
     if errors:
         raise OSError("cache scan incomplete")
-    _CACHE[path] = (time.time(), total, allocated, time.time())
-    return total
+    return total, allocated
+
+
+def scan(path):
+    # Only a background sampler walks the directory. A slow scan must neither
+    # block /metrics nor start another walk when Prometheus retries a scrape.
+    with _LOCK:
+        if path in _SCANNING:
+            return
+        _SCANNING.add(path)
+    started = time.monotonic()
+    sample = {"success": 0}
+    try:
+        if not os.path.isdir(path):
+            raise FileNotFoundError(path)
+        logical, allocated = used_bytes(path)
+        sample.update(success=1, logical=logical, allocated=allocated,
+                      timestamp=time.time())
+    except OSError:
+        pass
+    finally:
+        sample["duration"] = time.monotonic() - started
+        with _LOCK:
+            previous = _CACHE.get(path, {})
+            if "timestamp" not in sample and "timestamp" in previous:
+                sample["timestamp"] = previous["timestamp"]
+            _CACHE[path] = sample
+            _SCANNING.remove(path)
+
+
+def start_scanners(stop=None):
+    stop = stop if stop is not None else threading.Event()
+    def sample_forever(path):
+        while not stop.is_set():
+            scan(path)
+            # TTL is a pause after completion, so a walk taking longer than
+            # the interval cannot cause overlapping scans or a tight loop.
+            stop.wait(max(TTL, 1))
+    threads = []
+    for path in dict.fromkeys(path for _label, path in TARGETS):
+        thread = threading.Thread(target=sample_forever, args=(path,), daemon=True)
+        thread.start()
+        threads.append(thread)
+    return stop, threads
 
 
 def total_bytes(path):
@@ -151,32 +192,36 @@ def render():
         "cache_total_bytes": "Capacity of the backing filesystem; NOT a cache budget or per-pod quota.",
         "filesystem_available_bytes": "Backing filesystem bytes available to this process.",
         "filesystem_free_inodes": "Free inodes on the backing filesystem.",
-        "cache_scan_success": "Whether the latest requested directory scan completed successfully.",
+        "cache_scan_success": "Whether the latest completed background scan succeeded; zero until the first success.",
         "cache_scan_timestamp_seconds": "Unix timestamp of the last successful directory scan.",
-        "cache_scan_duration_seconds": "Duration of the latest scan or cached lookup.",
+        "cache_scan_duration_seconds": "Duration of the latest completed background scan.",
+        "cache_scan_in_progress": "Whether a background directory scan is in progress.",
         "cache_limit_bytes": "Explicit configured cache volume budget; absent when unknown.",
     }
     for name, help_text in descriptions.items():
         out.extend(["# HELP %s_%s %s" % (PREFIX, name, help_text), "# TYPE %s_%s gauge" % (PREFIX, name)])
     for label, path in TARGETS:
-        values = {}
-        started = time.monotonic()
+        with _LOCK:
+            cached = _CACHE.get(path, {}).copy()
+            scanning = path in _SCANNING
+        values = {
+            "cache_scan_success": cached.get("success", 0),
+            "cache_scan_duration_seconds": cached.get("duration", 0),
+            "cache_scan_in_progress": int(scanning),
+        }
+        if cached.get("success"):
+            values["cache_used_bytes"] = cached["logical"]
+            values["cache_allocated_bytes"] = cached["allocated"]
+        if "timestamp" in cached:
+            values["cache_scan_timestamp_seconds"] = cached["timestamp"]
         try:
-            if not os.path.isdir(path):
-                raise FileNotFoundError(path)
-            values["cache_used_bytes"] = used_bytes(path)
-            cached = _CACHE[path]
-            values["cache_allocated_bytes"] = cached[2]
-            values["cache_scan_timestamp_seconds"] = cached[3]
             st = os.statvfs(path)
             values["cache_total_bytes"] = st.f_blocks * st.f_frsize
             values["filesystem_available_bytes"] = st.f_bavail * st.f_frsize
             values["filesystem_free_inodes"] = st.f_favail
-            values["cache_scan_success"] = 1
         except OSError:
             # Unknown data is never represented as an empty, healthy cache.
             values = {"cache_scan_success": 0}
-        values["cache_scan_duration_seconds"] = time.monotonic() - started
         limit = os.environ.get("CACHE_LIMIT_BYTES", "0")
         if int(limit) > 0:
             values["cache_limit_bytes"] = int(limit)
@@ -214,6 +259,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    start_scanners()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
